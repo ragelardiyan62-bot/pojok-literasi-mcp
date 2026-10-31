@@ -2,21 +2,103 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import os
+import secrets
+import socket
+import time
 from pathlib import Path
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from . import anti_ai, db as dbmod
 from .db import DB, GagalValidasi
+from datetime import date
 
 STATIC = Path(__file__).parent / "static"
+LOKAL = {"127.0.0.1", "::1", "localhost", "testclient"}
+PENGATURAN_BOLEH = {"handle_ig"}
+
+HALAMAN_MASUK = """<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Masuk · Pojok Literasi</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f4ee;color:#2b2620;
+font:16px system-ui,sans-serif}form{background:#fff;padding:28px;border-radius:14px;width:min(320px,90vw);
+box-shadow:0 2px 12px rgba(0,0,0,.08)}h1{font-size:20px;color:#9a4a2b;margin:0 0 16px}input{width:100%;
+box-sizing:border-box;font-size:22px;letter-spacing:6px;text-align:center;padding:10px;border:1px solid #e6dfd3;
+border-radius:8px}button{width:100%;margin-top:12px;padding:12px;border:0;border-radius:8px;background:#9a4a2b;
+color:#fff;font-size:16px;font-weight:600}p{color:#b3362b;font-size:14px;min-height:1em}
+@media(prefers-color-scheme:dark){body{background:#1b1916;color:#ece6dc}form{background:#24211d}
+input{background:#1b1916;color:#ece6dc;border-color:#3a352e}}</style></head><body>
+<form method="post" action="/masuk"><h1>📚 Pojok Literasi</h1><input name="pin" type="password"
+inputmode="numeric" autocomplete="current-password" placeholder="PIN" autofocus required><p>{pesan}</p>
+<button>Masuk</button></form></body></html>"""
 
 
-def buat_app(db: DB) -> Starlette:
+def ip_lan() -> str | None:
+    """Alamat IP komputer ini di jaringan WiFi (tanpa mengirim data ke internet)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+def pin_dari_env() -> str | None:
+    pin = os.environ.get("POJOK_PIN", "").strip()
+    if pin and len(pin) < 6:
+        raise SystemExit("POJOK_PIN minimal 6 karakter.")
+    return pin or None
+
+
+class PenjagaPIN(BaseHTTPMiddleware):
+    """Akses dari komputer sendiri selalu boleh. Akses dari perangkat lain (HP) wajib PIN."""
+
+    def __init__(self, app, pin: str | None):
+        super().__init__(app)
+        self.pin = pin
+        self.rahasia = secrets.token_bytes(32)
+        self.gagal: dict[str, list[float]] = {}
+
+    def token(self) -> str:
+        return hmac.new(self.rahasia, (self.pin or "").encode(), hashlib.sha256).hexdigest()
+
+    async def dispatch(self, req: Request, call_next):
+        host = req.client.host if req.client else ""
+        if host in LOKAL:
+            return await call_next(req)
+        if not self.pin:
+            return Response("Akses dari perangkat lain belum diaktifkan.", status_code=403)
+        if req.url.path == "/masuk":
+            if req.method == "GET":
+                return HTMLResponse(HALAMAN_MASUK.replace("{pesan}", ""))
+            sekarang = time.time()
+            riwayat = [t for t in self.gagal.get(host, []) if sekarang - t < 300]
+            if len(riwayat) >= 5:
+                return HTMLResponse(HALAMAN_MASUK.replace("{pesan}", "Terlalu banyak percobaan. Tunggu 5 menit."), 429)
+            pin = (await req.form()).get("pin", "")
+            if hmac.compare_digest(str(pin).encode(), self.pin.encode()):
+                self.gagal.pop(host, None)
+                res = RedirectResponse("/", status_code=303)
+                res.set_cookie("pojok_sesi", self.token(), max_age=60 * 60 * 24 * 30, httponly=True, samesite="strict")
+                return res
+            self.gagal[host] = riwayat + [sekarang]
+            return HTMLResponse(HALAMAN_MASUK.replace("{pesan}", "PIN salah."), 401)
+        if hmac.compare_digest(req.cookies.get("pojok_sesi", ""), self.token()):
+            return await call_next(req)
+        if req.url.path.startswith("/api/"):
+            return JSONResponse({"error": "Perlu masuk dengan PIN."}, status_code=401)
+        return RedirectResponse("/masuk", status_code=303)
+
+
+def buat_app(db: DB, pin: str | None = None) -> Starlette:
     def ok(data=None, status: int = 200) -> JSONResponse:
         return JSONResponse(data if data is not None else {"ok": True}, status_code=status)
 
@@ -100,21 +182,42 @@ def buat_app(db: DB) -> Starlette:
         Route("/api/hook", api(lambda r, b: db.hook_terbukti(20))),
         Route("/api/laporan", api(lambda r, b: db.laporan(r.query_params["mulai"], r.query_params["selesai"]))),
         Route("/api/ekspor", api(lambda r, b: db.ekspor())),
+
+        Route("/api/momen", api(lambda r, b: db.daftar_momen())),
+        Route("/api/momen", api(lambda r, b: db.tambah_momen(b["tanggal"], b["nama"], b.get("catatan", ""))),
+              methods=["POST"]),
+        Route("/api/momen/{id:int}", api(lambda r, b: db.hapus_momen(pid(r)) or {"ok": True}), methods=["DELETE"]),
+        Route("/api/momen/rentang", api(lambda r, b: db.momen_antara(date.fromisoformat(r.query_params["mulai"]),
+                                                                     date.fromisoformat(r.query_params["selesai"])))),
+        Route("/api/bahan/{id:int}", api(lambda r, b: db.bahan(pid(r)))),
+        Route("/api/pengaturan", api(lambda r, b: {k: db.pengaturan(k) for k in PENGATURAN_BOLEH})),
+        Route("/api/pengaturan", api(lambda r, b: [db.simpan_pengaturan(k, str(v)) for k, v in b.items()
+                                                   if k in PENGATURAN_BOLEH] and {"ok": True}), methods=["PUT"]),
+        Route("/api/akses", api(lambda r, b: {
+            "hp_aktif": bool(pin), "ip": ip_lan(), "port": r.url.port or 80,
+            "dari_hp": (r.client.host if r.client else "") not in LOKAL})),
     ]
-    return Starlette(routes=routes)
+    return Starlette(routes=routes, middleware=[Middleware(PenjagaPIN, pin=pin)])
+
+
+def host_server(pin: str | None) -> str:
+    """Kalau PIN diatur, dashboard bisa dibuka dari HP di WiFi yang sama."""
+    return "0.0.0.0" if pin else "127.0.0.1"
 
 
 def main() -> None:
     """Jalankan dashboard saja (tanpa MCP), mis. untuk dipakai tanpa Claude Desktop."""
-    import os
     import webbrowser
 
     import uvicorn
 
     port = int(os.environ.get("POJOK_PORT", "8765"))
+    pin = pin_dari_env()
     print(f"Dashboard Pojok Literasi: http://localhost:{port}  (Ctrl+C untuk berhenti)")
+    if pin and ip_lan():
+        print(f"Dari HP (WiFi yang sama): http://{ip_lan()}:{port}")
     webbrowser.open(f"http://localhost:{port}")
-    uvicorn.run(buat_app(DB()), host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(buat_app(DB(), pin), host=host_server(pin), port=port, log_level="warning")
 
 
 if __name__ == "__main__":

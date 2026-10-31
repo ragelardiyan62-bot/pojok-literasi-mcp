@@ -97,6 +97,9 @@ def ringkasan_hari_ini() -> str:
             f"- {j['jadwal']} IDE-{j['id']} {j['judul']} [{j['status']}]" for j in r["jadwal_sepekan"]))
     if r["draft_mandek"]:
         baris.append("Mandek >7 hari: " + ", ".join(f"IDE-{d['id']} {d['judul']}" for d in r["draft_mandek"]))
+    if r["momen_mendatang"]:
+        baris.append("Momen 3 minggu ke depan: " + "; ".join(
+            f"{m['tanggal_jatuh']} {m['nama']} ({m['sisa_hari']} hari lagi)" for m in r["momen_mendatang"]))
     if r["posted_tanpa_angka"]:
         baris.append(f"{r['posted_tanpa_angka']} konten Posted belum ada angka performanya; minta user dari Insight IG.")
     if r["editan_belum_dipelajari"]:
@@ -372,6 +375,41 @@ def laporan_mingguan(tanggal_akhir: str | None = None) -> str:
     return "\n".join(out)
 
 
+# ---------------- Momen & kartu kutipan ----------------
+
+TEMA_KARTU = Literal["kertas", "senja", "malam", "hutan", "laut"]
+
+
+@mcp.tool()
+@_aman
+def momen_mendatang(hari: int = 45) -> str:
+    """Momen literasi/nasional dalam N hari ke depan, untuk merencanakan konten bertema."""
+    m = db().momen_mendatang(hari)
+    return "\n".join(f"- {x['tanggal_jatuh']} ({x['sisa_hari']} hari lagi) {x['nama']}"
+                     + (f": {x['catatan']}" if x["catatan"] else "") for x in m) or f"Tidak ada momen dalam {hari} hari."
+
+
+@mcp.tool()
+@_aman
+def tambah_momen(tanggal: str, nama: str, catatan: str = "") -> str:
+    """Tambah momen. tanggal 'MM-DD' untuk tiap tahun, atau 'YYYY-MM-DD' untuk sekali (mis. rilis film adaptasi)."""
+    m = db().tambah_momen(tanggal, nama, catatan)
+    return f"Momen ditambahkan: {m['tanggal']} {m['nama']}"
+
+
+@mcp.tool()
+@_aman
+def buat_kartu_kutipan(nomor_bahan: int, tema: TEMA_KARTU = "kertas",
+                       ukuran: Literal["4:5", "1:1", "9:16"] = "4:5") -> str:
+    """Siapkan kartu kutipan (gambar siap posting) dari satu bahan (#nomor). Mengembalikan link
+    dashboard tempat user melihat dan mengunduh PNG-nya. Pakai bahan berjenis Kutipan."""
+    from urllib.parse import urlencode
+    x = db().bahan(nomor_bahan)
+    url = f"http://localhost:{_port()}/#kartu?" + urlencode({"bahan": x["id"], "tema": tema, "ukuran": ukuran})
+    peringatan = "" if x["jenis"] == "Kutipan" else f" (catatan: bahan ini berjenis {x['jenis']}, bukan Kutipan)"
+    return f"Kartu untuk #{x['id']} dari {x['buku_judul']} siap{peringatan}. Buka: {url}"
+
+
 @mcp.tool()
 def cek_anti_ai(naskah: str) -> str:
     """Periksa ciri tulisan AI. Berjalan lokal tanpa memakai token model."""
@@ -431,6 +469,15 @@ def susun_panduan_suara() -> str:
 
 
 @mcp.prompt()
+def rencana_momen() -> str:
+    """Rencanakan konten untuk momen literasi/nasional yang akan datang."""
+    return ("Panggil momen_mendatang(45). Untuk tiap momen yang relevan, cari bahan yang cocok dengan cari_bahan "
+            "(kata/tema) dan daftar_buku. Usulkan 1 ide per momen, dari buku yang sudah kubaca dan bahan milikku, "
+            "lengkap dengan sudut, format, dan jadwal posting (H-0 atau H-1). Simpan yang kupilih dengan simpan_ide "
+            "lalu ubah_ide untuk jadwalnya. Kalau tidak ada bahan yang cocok, tanyakan pengalamanku dulu.")
+
+
+@mcp.prompt()
 def evaluasi_mingguan() -> str:
     """Evaluasi pekan ini dan rencana pekan depan."""
     return ("Panggil laporan_mingguan dan hook_terbukti. Kalau ada konten Posted tanpa angka, minta angkanya "
@@ -457,9 +504,11 @@ def _nyalakan_dashboard() -> None:
 
     def jalan():
         import uvicorn
-        from .web import buat_app
+        from .web import buat_app, host_server, pin_dari_env
         try:
-            uvicorn.run(buat_app(db()), host="127.0.0.1", port=_port(), log_level="warning", access_log=False)
+            pin = pin_dari_env()
+            uvicorn.run(buat_app(db(), pin), host=host_server(pin), port=_port(), log_level="warning",
+                        access_log=False)
         except BaseException as e:  # jangan sampai mematikan MCP
             print(f"Dashboard gagal jalan: {e}", file=sys.stderr)
 

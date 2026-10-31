@@ -24,7 +24,9 @@ Browser (kamu) ◄──────────────┘  dashboard http:
 | Bank bahan | Reaksi, kutipan, dan cerita pribadi. Bisa dicari per kata, tema, atau jenis |
 | Ide & Naskah | Papan kanban Ide → Wawancara → Draft → Siap → Posted, dengan 8 sudut konten |
 | Editor naskah | Cek anti-AI langsung saat mengetik, hitung kata, dan riwayat versi (🤖 agent vs ✍️ kamu) |
-| Kalender | Jadwal posting per bulan |
+| Kalender | Jadwal posting per bulan + **momen** (Hari Buku Nasional, Hari Aksara, dll; bisa ditambah sendiri) |
+| Kartu kutipan | Kutipan dari bank bahan jadi gambar PNG siap posting (5 tema, ukuran 4:5 / 1:1 / 9:16) |
+| Pengaturan | Nama akun IG, akses dari HP, backup |
 | Performa | Angka dari Insight IG, skor per konten, rata-rata per sudut/format, bank hook terbukti |
 | Audiens | Pertanyaan dari komentar, DM, dan Story |
 | Agent | Titip tugas untuk agent dan lihat hasilnya |
@@ -47,6 +49,8 @@ Browser (kamu) ◄──────────────┘  dashboard http:
 | `hook_terbukti` | Hook dari konten dengan skor tertinggi |
 | `laporan_mingguan` | Rekap 7 hari: yang diposting, performa per sudut/format, jadwal pekan depan |
 | `template_format` | Kerangka naskah per format |
+| `momen_mendatang`, `tambah_momen` | Momen literasi/nasional untuk konten bertema |
+| `buat_kartu_kutipan` | Siapkan kartu kutipan, kembalikan link untuk diunduh |
 | `cek_anti_ai` | Berjalan lokal, tanpa token |
 
 **Prompt siap pakai.** Di kotak chat Claude Desktop, klik **+** lalu pilih **pojok-literasi**:
@@ -56,6 +60,7 @@ Browser (kamu) ◄──────────────┘  dashboard http:
 - `belajar_gaya`: agent mempelajari editanmu dan mengusulkan pembaruan panduan suara
 - `susun_panduan_suara`: tempel caption lamamu, agent menyusun panduan suara dari situ
 - `evaluasi_mingguan`: evaluasi pekan ini + 3 ide untuk pekan depan
+- `rencana_momen`: siapkan konten untuk momen 45 hari ke depan
 
 ## Alur kerja harian
 
@@ -113,6 +118,23 @@ Setelah itu restart Claude Desktop, lalu buka http://localhost:8765.
 | `POJOK_DB` | `~/PojokLiterasi/pojok-literasi.db` | Lokasi file data |
 | `POJOK_PORT` | `8765` | Port dashboard |
 | `POJOK_WEB` | `1` | Isi `0` untuk tidak menyalakan dashboard otomatis |
+| `POJOK_PIN` | (kosong) | Isi (min. 6 karakter) untuk membuka dashboard dari HP di WiFi yang sama |
+
+### Membuka dari HP
+1. Tambahkan PIN di config Claude Desktop:
+   ```json
+   "pojok-literasi": {
+     "command": "uv",
+     "args": ["--directory", "/PATH/KE/pojok-literasi-mcp", "run", "pojok-literasi-mcp"],
+     "env": { "POJOK_PIN": "pin-rahasiamu" }
+   }
+   ```
+2. Restart Claude Desktop, lalu buka tab **Pengaturan** di dashboard. Alamat untuk HP (mis. `http://192.168.1.5:8765`) tampil di sana.
+3. Buka alamat itu di HP yang tersambung ke **WiFi yang sama**, masukkan PIN, lalu pilih "Tambahkan ke Layar Utama".
+
+Komputer harus menyala dengan Claude Desktop terbuka. Dari komputer sendiri, dashboard tidak meminta PIN.
+Akses dari luar rumah (mis. data seluler) memerlukan hosting online dan belum termasuk di sini.
+Kalau Windows menanyakan izin firewall untuk Python, pilih **Private network**.
 
 Dashboard juga bisa dijalankan tanpa Claude Desktop:
 ```bash

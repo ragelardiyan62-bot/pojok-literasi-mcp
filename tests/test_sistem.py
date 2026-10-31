@@ -62,7 +62,7 @@ def test_tool_terdaftar():
         return [t.name for t in await mcp_server.mcp.list_tools()], [p.name for p in await mcp_server.mcp.list_prompts()]
     tools, prompts = asyncio.run(daftar())
     assert {"ringkasan_hari_ini", "konteks_ide", "pelajari_editan", "cek_anti_ai"} <= set(tools)
-    assert {"mulai_hari", "cari_ide", "wawancara", "belajar_gaya", "susun_panduan_suara", "evaluasi_mingguan"} == set(prompts)
+    assert {"mulai_hari", "cari_ide", "wawancara", "belajar_gaya", "susun_panduan_suara", "evaluasi_mingguan", "rencana_momen"} == set(prompts)
 
 
 def test_validasi(db):

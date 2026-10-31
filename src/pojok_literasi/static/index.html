@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pojok Literasi</title>
+<meta name="theme-color" content="#9a4a2b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
 :root {
   --bg: #f7f4ee; --panel: #ffffff; --ink: #2b2620; --muted: #7a7064; --line: #e6dfd3;
@@ -91,6 +94,13 @@ table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .metrik { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .metrik label.f { white-space: nowrap; }
 .metrik input { width: 100%; }
+.kal .chip.momen { background: none; color: var(--accent); border: 1px dashed var(--accent); cursor: default; }
+.kartu-wrap { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
+.kartu-wrap canvas { width: 100%; max-width: 440px; height: auto; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,.15); display: block; margin: 0 auto; }
+.tema-pilih { display: flex; gap: 8px; flex-wrap: wrap; }
+.tema-pilih button { width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; }
+.tema-pilih button.aktif { border-color: var(--ink); outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 800px) { .kartu-wrap { grid-template-columns: 1fr; } }
 .kosong-info { padding: 24px; text-align: center; color: var(--muted); }
 @media (max-width: 800px) {
   .editor { grid-template-columns: 1fr; }
@@ -123,9 +133,10 @@ table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
 const HALAMAN = [
   ["beranda", "Beranda"], ["buku", "Buku"], ["bahan", "Bahan"], ["ide", "Ide & Naskah"],
   ["kalender", "Kalender"], ["performa", "Performa"], ["audiens", "Audiens"], ["agent", "Agent"], ["suara", "Suara & Template"],
+  ["pengaturan", "Pengaturan"],
 ];
 const WARNA_STATUS = { Ide: "--s-ide", Wawancara: "--s-wawancara", Draft: "--s-draft", Siap: "--s-siap", Posted: "--s-posted" };
-let META = {}, BUKU = [], FILTER_BAHAN = {}, halaman = "beranda", bulanKal = new Date().toISOString().slice(0, 7);
+let META = {}, BUKU = [], FILTER_BAHAN = {}, KARTU_Q = {}, halaman = "beranda", bulanKal = new Date().toISOString().slice(0, 7);
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -159,9 +170,16 @@ $("#formTangkap").addEventListener("submit", async e => {
   if (["beranda", "bahan"].includes(halaman)) render();
 });
 
-function pindah(h) { halaman = h; location.hash = h; render(); }
+function pindah(h) { if (location.hash.slice(1) === h) render(); else location.hash = h; }
+function bacaHash() {
+  const [h, q] = location.hash.slice(1).split("?");
+  if (h === "kartu") { halaman = "kartu"; KARTU_Q = Object.fromEntries(new URLSearchParams(q || "")); }
+  else if (HALAMAN.some(([k]) => k === h)) halaman = h;
+}
+window.addEventListener("hashchange", () => { bacaHash(); render(); });
 function renderNav() {
-  $("#nav").innerHTML = HALAMAN.map(([k, l]) => `<button class="${k === halaman ? "aktif" : ""}" data-h="${k}">${l}</button>`).join("");
+  const sorot = halaman === "kartu" ? "bahan" : halaman;
+  $("#nav").innerHTML = HALAMAN.map(([k, l]) => `<button class="${k === sorot ? "aktif" : ""}" data-h="${k}">${l}</button>`).join("");
   $("#nav").querySelectorAll("button").forEach(b => b.onclick = () => pindah(b.dataset.h));
 }
 
@@ -186,6 +204,8 @@ const VIEW = {
       <div class="kartu"><h3>⏳ Mandek lebih dari 7 hari</h3>${daftar(r.draft_mandek, d => `<div data-ide="${d.id}" class="klik">IDE-${d.id} ${esc(d.judul)}</div>`, "Tidak ada. Mantap!")}</div>
       <div class="kartu"><h3>🤖 Tugas untuk agent</h3>${daftar(r.tugas_menunggu, t => `<div>T-${t.id} ${esc(t.permintaan)}</div>`, "Tidak ada tugas menunggu.")}
         <p class="kecil muted">Buka Claude Desktop dan pilih prompt <b>mulai_hari</b> agar agent mengerjakannya.</p></div>
+      <div class="kartu"><h3>🎉 Momen 3 minggu ke depan</h3>${daftar(r.momen_mendatang, m => `<div><b>${esc(m.nama)}</b> <span class="muted kecil">${esc(m.tanggal_jatuh)} · ${m.sisa_hari === 0 ? "hari ini" : m.sisa_hari + " hari lagi"}</span>${m.catatan ? `<div class="kecil muted">${esc(m.catatan)}</div>` : ""}</div>`, "Tidak ada momen dekat.")}
+        <p class="kecil muted">Prompt <b>rencana_momen</b> di Claude membantu menyiapkan kontennya.</p></div>
       <div class="kartu"><h3>🧺 Stok bahan</h3><div class="angka">${r.bahan_belum_dipakai}</div><div class="muted kecil">bahan belum dipakai jadi konten</div>
         <div style="margin-top:8px" class="kecil">${r.pertanyaan_terbuka} pertanyaan audiens terbuka</div>
         ${r.posted_tanpa_angka ? `<div style="margin-top:8px" class="kecil">📊 ${r.posted_tanpa_angka} konten Posted belum ada angka performanya. Isi di editor ide.</div>` : ""}
@@ -216,7 +236,7 @@ const VIEW = {
       <select name="jenis">${opsi(META.jenis, f.jenis, "Semua jenis")}</select><button class="g">Cari</button></form>
     ${data.length ? `<div class="kartu daftar">${data.map(x => `<div>
       <div class="baris" style="justify-content:space-between"><span><span class="lencana">${esc(x.jenis)}</span> <b>${esc(x.buku_judul)}</b> <span class="muted kecil">${esc(x.lokasi)} · #${x.id}</span></span>
-      <span class="baris"><label class="kecil"><input type="checkbox" data-pakai="${x.id}" ${x.dipakai ? "checked" : ""}> dipakai</label><button class="g bahaya kecil" data-hapus-bahan="${x.id}">Hapus</button></span></div>
+      <span class="baris"><a class="g kecil" style="text-decoration:none;padding:4px 10px;border:1px solid var(--line);border-radius:8px;color:var(--ink)" href="#kartu?bahan=${x.id}">🖼️ Kartu</a><label class="kecil"><input type="checkbox" data-pakai="${x.id}" ${x.dipakai ? "checked" : ""}> dipakai</label><button class="g bahaya kecil" data-hapus-bahan="${x.id}">Hapus</button></span></div>
       <div style="margin-top:4px">${esc(x.isi)}</div>
       <div class="baris" style="margin-top:4px">${x.tema.map(t => `<span class="lencana">#${esc(t)}</span>`).join("")}
         <input class="kecil" data-tema="${x.id}" data-tema-lama="${esc(JSON.stringify(x.tema))}" placeholder="+ tema (pisah koma)" value="" size="18"></div></div>`).join("")}</div>`
@@ -245,20 +265,29 @@ const VIEW = {
   },
 
   async kalender() {
-    const data = await api("/kalender?bulan=" + bulanKal);
     const [th, bl] = bulanKal.split("-").map(Number);
+    const akhirBulan = `${bulanKal}-${String(new Date(th, bl, 0).getDate()).padStart(2, "0")}`;
+    const [data, momen, semuaMomen] = await Promise.all([api("/kalender?bulan=" + bulanKal),
+      api(`/momen/rentang?mulai=${bulanKal}-01&selesai=${akhirBulan}`), api("/momen")]);
     const awal = (new Date(th, bl - 1, 1).getDay() + 6) % 7, jml = new Date(th, bl, 0).getDate();
     const hariIni = new Date().toISOString().slice(0, 10);
     let sel = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map(h => `<div class="kepala">${h}</div>`).join("");
     for (let i = 0; i < awal; i++) sel += `<div class="hari kosong"></div>`;
     for (let d = 1; d <= jml; d++) {
       const tgl = `${bulanKal}-${String(d).padStart(2, "0")}`;
-      sel += `<div class="hari ${tgl === hariIni ? "ini" : ""}"><div class="muted">${d}</div>${data.filter(i => i.jadwal === tgl).map(i => `<span class="chip" data-ide="${i.id}" style="background:var(${WARNA_STATUS[i.status]})" title="${esc(i.judul)}">${esc(i.judul)}</span>`).join("")}</div>`;
+      sel += `<div class="hari ${tgl === hariIni ? "ini" : ""}"><div class="muted">${d}</div>${momen.filter(m => m.tanggal_jatuh === tgl).map(m => `<span class="chip momen" title="${esc(m.nama + (m.catatan ? " · " + m.catatan : ""))}">🎉 ${esc(m.nama)}</span>`).join("")}${data.filter(i => i.jadwal === tgl).map(i => `<span class="chip" data-ide="${i.id}" style="background:var(${WARNA_STATUS[i.status]})" title="${esc(i.judul)}">${esc(i.judul)}</span>`).join("")}</div>`;
     }
     const nama = new Date(th, bl - 1, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
     return `<div class="baris" style="justify-content:space-between;margin-bottom:14px"><h2 style="margin:0">Kalender Posting · ${nama}</h2>
       <div class="baris"><button class="g" data-bulan="-1">‹</button><button class="g" data-bulan="0">Bulan ini</button><button class="g" data-bulan="1">›</button></div></div>
-      <div class="kal">${sel}</div><p class="kecil muted">Atur jadwal dari editor ide.</p>`;
+      <div class="kal">${sel}</div><p class="kecil muted">Atur jadwal dari editor ide. 🎉 = momen literasi/nasional.</p>
+      <div class="kartu" style="margin-top:16px"><h3>🎉 Daftar momen</h3>
+        <form class="form" id="formMomen"><input name="tanggal" placeholder="MM-DD atau YYYY-MM-DD" required size="18">
+          <input name="nama" placeholder="Nama momen (mis. rilis film adaptasi)" required style="flex:1 1 220px">
+          <input name="catatan" placeholder="Ide konten (opsional)" style="flex:1 1 200px"><button class="u">Tambah</button></form>
+        <details><summary class="kecil" style="cursor:pointer;margin-bottom:6px">Lihat semua momen (${semuaMomen.length})</summary>
+        <div class="daftar kecil">${semuaMomen.map(m => `<div class="baris" style="justify-content:space-between"><span><b>${esc(m.tanggal)}</b> ${esc(m.nama)} <span class="muted">${esc(m.catatan)}</span></span><button class="g bahaya kecil" data-hapus-momen="${m.id}">Hapus</button></div>`).join("")}</div></details>
+        <p class="kecil muted">MM-DD = berulang tiap tahun, YYYY-MM-DD = sekali saja.</p></div>`;
   },
 
   async performa() {
@@ -286,6 +315,38 @@ const VIEW = {
         <td class="n">${k.likes ?? "-"}</td><td class="n">${k.komentar ?? "-"}</td><td class="n">${k.simpan ?? "-"}</td><td class="n">${k.share ?? "-"}</td><td class="n">${k.jangkauan ?? "-"}</td><td class="n"><b>${k.skor}</b>${k.rasio != null ? `<div class="kecil muted">${k.rasio}%</div>` : ""}</td></tr>`).join("")}
       </tbody></table>
       <p class="kecil muted">Skor = likes + 2×komentar + 3×(simpan + share). Simpan dan share diberi bobot lebih karena menunjukkan konten benar-benar berguna. Persen = interaksi ÷ jangkauan.</p></div>`;
+  },
+
+  async kartu() {
+    const daftar = await api("/bahan?jenis=Kutipan");
+    let pilih = KARTU_Q.bahan ? +KARTU_Q.bahan : daftar[0]?.id;
+    if (pilih && !daftar.some(x => x.id === pilih)) { try { daftar.unshift(await api(`/bahan/${pilih}`)); } catch { pilih = daftar[0]?.id; } }
+    if (!daftar.length) return `<h2>Kartu Kutipan</h2><div class="kosong-info">Belum ada kutipan. Catat kutipan lewat Tangkap cepat (jenis: Kutipan).</div>`;
+    const { handle_ig } = await api("/pengaturan");
+    KARTU_STATE = { daftar, handle: handle_ig, tema: KARTU_Q.tema || "kertas", ukuran: KARTU_Q.ukuran || "4:5", bahan: pilih };
+    return `<h2>Kartu Kutipan</h2><div class="kartu-wrap"><div class="kartu">
+      <label class="f">Kutipan<select id="kBahan">${opsi(daftar.map(x => [x.id, `#${x.id} ${x.isi.slice(0, 50)}${x.isi.length > 50 ? "…" : ""} (${x.buku_judul})`]), pilih)}</select></label>
+      <label class="f" style="margin-top:10px">Teks di kartu (boleh disunting)<textarea id="kTeks" rows="5"></textarea></label>
+      <label class="f" style="margin-top:10px">Judul · Penulis<input id="kSumber"></label>
+      <div class="f" style="margin-top:10px">Tema<div class="tema-pilih" id="kTema">${Object.entries(TEMA_KARTU).map(([k, t]) => `<button type="button" title="${k}" data-tema="${k}" style="background:linear-gradient(135deg,${t.bg[0]},${t.bg[1]})"></button>`).join("")}</div></div>
+      <label class="f" style="margin-top:10px">Ukuran<select id="kUkuran">${opsi([["4:5", "4:5 Feed (1080×1350)"], ["1:1", "1:1 Kotak (1080×1080)"], ["9:16", "9:16 Story/Reels (1080×1920)"]], KARTU_STATE.ukuran)}</select></label>
+      <div class="kecil muted" style="margin-top:10px">Nama akun di kartu: <b>${esc(handle_ig || "belum diatur")}</b> (ubah di Pengaturan)</div>
+      <button class="u" id="kUnduh" style="margin-top:14px;width:100%">⬇️ Unduh PNG</button></div>
+      <div><canvas id="kanvas"></canvas></div></div>`;
+  },
+
+  async pengaturan() {
+    const [cfg, akses] = await Promise.all([api("/pengaturan"), api("/akses")]);
+    const urlHP = akses.ip ? `http://${akses.ip}:${akses.port}` : null;
+    return `<h2>Pengaturan</h2><div class="grid">
+      <div class="kartu"><h3>Akun Instagram</h3><label class="f">Nama akun (tampil di kartu kutipan)<input id="setHandle" placeholder="@pojokliterasi" value="${esc(cfg.handle_ig)}"></label>
+        <button class="u" id="simpanSet" style="margin-top:10px">Simpan</button></div>
+      <div class="kartu"><h3>📱 Akses dari HP</h3>${akses.hp_aktif
+        ? `<p>Aktif. Buka di HP yang terhubung ke <b>WiFi yang sama</b>:</p><p style="font-size:18px"><b>${esc(urlHP || "(IP tidak terdeteksi)")}</b></p><p class="kecil muted">Masuk dengan PIN yang kamu atur. Di HP, pilih "Tambahkan ke Layar Utama" agar terasa seperti aplikasi.</p>`
+        : `<p>Belum aktif. Tambahkan PIN (minimal 6 karakter) di config Claude Desktop, lalu restart Claude:</p><pre class="versi kecil">"env": { "POJOK_PIN": "pin-rahasiamu" }</pre><p class="kecil muted">Setelah aktif, alamat untuk HP akan muncul di sini. Komputer harus menyala dan Claude Desktop terbuka.</p>`}</div>
+      <div class="kartu"><h3>💾 Data & Backup</h3><p class="kecil">Semua data ada di satu file:</p><pre class="versi kecil">${esc(META.lokasi_db)}</pre>
+        <p class="kecil muted">Salin file itu ke Google Drive/flashdisk secara berkala.</p><a class="g" style="display:inline-block;text-decoration:none;color:var(--ink)" href="/api/ekspor" download="pojok-literasi-ekspor.json">Ekspor JSON</a></div>
+    </div>`;
   },
 
   async audiens() {
@@ -349,6 +410,8 @@ const IKAT = {
       else { const [t, bl] = bulanKal.split("-").map(Number); const d = new Date(t, bl - 1 + g, 1); bulanKal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
       render();
     });
+    $("#formMomen").onsubmit = async e => { e.preventDefault(); await api("/momen", "POST", formJSON(e.target)); toast("Momen ditambahkan"); render(); };
+    m.querySelectorAll("[data-hapus-momen]").forEach(b => b.onclick = async () => { if (confirm("Hapus momen ini?")) { await api(`/momen/${b.dataset.hapusMomen}`, "DELETE"); render(); } });
   },
   buku(m) {
     ikatUmum(m);
@@ -401,7 +464,79 @@ const IKAT = {
     });
   },
   performa: ikatUmum,
+  pengaturan() { $("#simpanSet").onclick = async () => { await api("/pengaturan", "PUT", { handle_ig: $("#setHandle").value.trim() }); toast("Tersimpan"); }; },
+  kartu() {
+    if (!KARTU_STATE.daftar) return;
+    const isi = () => {
+      const x = KARTU_STATE.daftar.find(b => b.id === +$("#kBahan").value);
+      $("#kTeks").value = x.isi; $("#kSumber").value = [x.buku_judul, x.buku_penulis].filter(Boolean).join(" · ");
+      KARTU_STATE.bahan = x.id;
+    };
+    const gambar = () => gambarKartu($("#kanvas"), { teks: $("#kTeks").value, sumber: $("#kSumber").value, handle: KARTU_STATE.handle,
+      tema: KARTU_STATE.tema, ukuran: $("#kUkuran").value });
+    const tandai = () => document.querySelectorAll("#kTema button").forEach(b => b.classList.toggle("aktif", b.dataset.tema === KARTU_STATE.tema));
+    isi(); tandai();
+    document.fonts.ready.then(gambar);
+    $("#kBahan").onchange = () => { isi(); gambar(); };
+    $("#kTeks").oninput = gambar; $("#kSumber").oninput = gambar; $("#kUkuran").onchange = gambar;
+    document.querySelectorAll("#kTema button").forEach(b => b.onclick = () => { KARTU_STATE.tema = b.dataset.tema; tandai(); gambar(); });
+    $("#kUnduh").onclick = () => $("#kanvas").toBlob(blob => {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `kutipan-${KARTU_STATE.bahan}-${KARTU_STATE.tema}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast("Gambar diunduh");
+    }, "image/png");
+  },
 };
+
+/* ---------------- Kartu kutipan (canvas) ---------------- */
+let KARTU_STATE = {};
+const TEMA_KARTU = {
+  kertas: { bg: ["#f6efe3", "#ece2d0"], ink: "#2b2620", aksen: "#9a4a2b" },
+  senja:  { bg: ["#f7d9bd", "#e7987a"], ink: "#3a1d12", aksen: "#8a2f17" },
+  malam:  { bg: ["#1f2538", "#33395a"], ink: "#f2ebdc", aksen: "#e8b960" },
+  hutan:  { bg: ["#22362b", "#34503f"], ink: "#eef2e8", aksen: "#c8d79f" },
+  laut:   { bg: ["#123049", "#1f5a78"], ink: "#eaf4f8", aksen: "#93d2e6" },
+};
+const UKURAN_KARTU = { "4:5": [1080, 1350], "1:1": [1080, 1080], "9:16": [1080, 1920] };
+const SERIF = "Georgia, 'Times New Roman', serif", SANS = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+
+function bungkusTeks(ctx, teks, lebar) {
+  const baris = [];
+  for (const paragraf of teks.split("\n")) {
+    let skr = "";
+    for (const kata of paragraf.split(/\s+/).filter(Boolean)) {
+      const coba = skr ? skr + " " + kata : kata;
+      if (ctx.measureText(coba).width > lebar && skr) { baris.push(skr); skr = kata; } else skr = coba;
+    }
+    baris.push(skr);
+  }
+  return baris;
+}
+
+function gambarKartu(cv, { teks, sumber, handle, tema, ukuran }) {
+  const [W, H] = UKURAN_KARTU[ukuran] || UKURAN_KARTU["4:5"], t = TEMA_KARTU[tema] || TEMA_KARTU.kertas;
+  cv.width = W; cv.height = H;
+  const c = cv.getContext("2d"), P = 110;
+  const g = c.createLinearGradient(0, 0, W * 0.4, H); g.addColorStop(0, t.bg[0]); g.addColorStop(1, t.bg[1]);
+  c.fillStyle = g; c.fillRect(0, 0, W, H);
+  c.fillStyle = t.aksen; c.globalAlpha = 0.9; c.font = `bold 280px ${SERIF}`; c.textBaseline = "alphabetic";
+  c.fillText("\u201C", P - 16, P + 200); c.globalAlpha = 1;
+  const atas = P + 230, bawah = H - P - 230, lebar = W - 2 * P;
+  const kutipan = (teks || "").trim().replace(/^["“”]+|["“”]+$/g, "");
+  let ukuranHuruf = 78, baris, tinggiBaris;
+  for (; ukuranHuruf >= 30; ukuranHuruf -= 2) {
+    c.font = `${ukuranHuruf}px ${SERIF}`; baris = bungkusTeks(c, kutipan, lebar); tinggiBaris = ukuranHuruf * 1.42;
+    if (baris.length * tinggiBaris <= bawah - atas) break;
+  }
+  c.fillStyle = t.ink; c.textBaseline = "top";
+  let y = atas + Math.max(0, (bawah - atas - baris.length * tinggiBaris) / 2);
+  for (const b of baris) { c.fillText(b, P, y); y += tinggiBaris; }
+  y += 36; c.fillStyle = t.aksen; c.fillRect(P, y, 70, 5); y += 30;
+  c.fillStyle = t.ink; c.font = `600 36px ${SANS}`;
+  for (const b of bungkusTeks(c, sumber || "", lebar).slice(0, 2)) { c.fillText(b, P, y); y += 48; }
+  c.globalAlpha = 0.75; c.font = `600 32px ${SANS}`; c.textBaseline = "alphabetic";
+  c.fillText(handle || "Pojok Literasi", P, H - P + 20); c.globalAlpha = 1;
+}
 
 /* ---------------- Modal: Buku ---------------- */
 async function bukaBuku(id) {
@@ -494,8 +629,7 @@ async function bukaIde(id) {
   META = await api("/meta");
   $("#formTangkap").jenis.innerHTML = opsi(META.jenis, "Reaksi");
   await muatBuku();
-  const h = location.hash.slice(1);
-  if (HALAMAN.some(([k]) => k === h)) halaman = h;
+  bacaHash();
   render();
 })();
 </script>

@@ -113,7 +113,38 @@ CREATE TABLE IF NOT EXISTS template (
     format TEXT PRIMARY KEY,
     kerangka TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS momen (
+    id INTEGER PRIMARY KEY,
+    tanggal TEXT NOT NULL,          -- 'MM-DD' (berulang tiap tahun) atau 'YYYY-MM-DD' (sekali)
+    nama TEXT NOT NULL,
+    catatan TEXT NOT NULL DEFAULT '',
+    UNIQUE (tanggal, nama)
+);
 """
+
+# Momen bawaan (berulang tiap tahun). Bisa diubah/dihapus dari dashboard.
+MOMEN_AWAL = [
+    ("02-06", "Hari lahir Pramoedya Ananta Toer", "Bahas karya Pram atau buku sastra sejarah"),
+    ("02-09", "Hari Pers Nasional", "Buku jurnalistik/nonfiksi"),
+    ("02-21", "Hari Bahasa Ibu Internasional", "Buku berbahasa daerah / tentang bahasa"),
+    ("03-21", "Hari Puisi Sedunia", "Buku puisi favorit, kutipan puisi"),
+    ("04-02", "Hari Buku Anak Internasional", "Buku masa kecil yang membekas"),
+    ("04-21", "Hari Kartini", "Penulis perempuan Indonesia, Habis Gelap Terbitlah Terang"),
+    ("04-23", "Hari Buku Sedunia", "Momen besar: rekomendasi, ajakan membaca"),
+    ("04-28", "Hari Puisi Nasional (wafat Chairil Anwar)", "Puisi Chairil, kutipan"),
+    ("05-02", "Hari Pendidikan Nasional", "Buku tentang pendidikan/belajar"),
+    ("05-17", "Hari Buku Nasional", "Momen besar: buku lokal, cerita perjalanan membaca"),
+    ("05-20", "Hari Kebangkitan Nasional", "Buku sejarah pergerakan"),
+    ("07-26", "Hari Puisi Indonesia (lahir Chairil Anwar)", "Buku puisi Indonesia"),
+    ("08-17", "Hari Kemerdekaan RI", "Buku bertema perjuangan/kebangsaan"),
+    ("09-08", "Hari Aksara Internasional", "Literasi, ajakan membaca"),
+    ("09-14", "Hari Kunjung Perpustakaan", "Perpustakaan favorit, tips pinjam buku"),
+    ("10-01", "Awal Bulan Bahasa dan Sastra", "Sebulan konten sastra Indonesia"),
+    ("10-28", "Hari Sumpah Pemuda", "Buku tentang anak muda / bahasa Indonesia"),
+    ("11-10", "Hari Pahlawan", "Biografi/novel sejarah"),
+    ("12-22", "Hari Ibu", "Buku tentang ibu dan keluarga"),
+    ("12-31", "Akhir tahun", "Rekap bacaan setahun, buku terbaik tahun ini"),
+]
 
 # Kolom yang ditambahkan setelah Versi 1 (database lama di-upgrade otomatis).
 KOLOM_BARU = {
@@ -190,6 +221,9 @@ class DB:
         self._migrasi()
         self.c.execute("INSERT OR IGNORE INTO pengaturan VALUES ('panduan_suara', ?)", (PANDUAN_AWAL,))
         self.c.executemany("INSERT OR IGNORE INTO template VALUES (?, ?)", TEMPLATE_AWAL.items())
+        if self._pengaturan("momen_diisi", "0") == "0":
+            self.c.executemany("INSERT OR IGNORE INTO momen (tanggal, nama, catatan) VALUES (?,?,?)", MOMEN_AWAL)
+            self.c.execute("INSERT OR REPLACE INTO pengaturan VALUES ('momen_diisi', '1')")
         self.c.commit()
 
     def _migrasi(self) -> None:
@@ -302,7 +336,8 @@ class DB:
             _cek(jenis, JENIS_BAHAN, "Jenis")
             syarat.append("x.jenis = ?"); args.append(jenis)
         where = (" WHERE " + " AND ".join(syarat)) if syarat else ""
-        return self._q(f"""SELECT x.*, b.judul AS buku_judul FROM bahan x JOIN buku b ON b.id = x.buku_id
+        return self._q(f"""SELECT x.*, b.judul AS buku_judul, b.penulis AS buku_penulis FROM bahan x
+                           JOIN buku b ON b.id = x.buku_id
                            {where} ORDER BY x.id DESC LIMIT ?""", (*args, batas))
 
     def semua_tema(self) -> list[str]:
@@ -510,6 +545,66 @@ class DB:
         _cek(format, FORMAT, "Format")
         self._tulis("INSERT OR REPLACE INTO template VALUES (?, ?)", (format, kerangka))
 
+    # ---------------- Momen ----------------
+
+    def tambah_momen(self, tanggal: str, nama: str, catatan: str = "") -> dict:
+        import re as _re
+        if not _re.fullmatch(r"(\d{4}-)?\d{2}-\d{2}", tanggal or ""):
+            raise GagalValidasi("Tanggal momen harus 'MM-DD' (tiap tahun) atau 'YYYY-MM-DD' (sekali).")
+        try:
+            date.fromisoformat(tanggal if len(tanggal) == 10 else f"2024-{tanggal}")
+        except ValueError:
+            raise GagalValidasi(f"Tanggal '{tanggal}' tidak valid.")
+        if not nama.strip():
+            raise GagalValidasi("Nama momen tidak boleh kosong.")
+        try:
+            i = self._tulis("INSERT INTO momen (tanggal, nama, catatan) VALUES (?,?,?)", (tanggal, nama.strip(), catatan.strip()))
+        except sqlite3.IntegrityError:
+            raise GagalValidasi("Momen itu sudah ada.")
+        return self._satu("SELECT * FROM momen WHERE id = ?", (i,))
+
+    def daftar_momen(self) -> list[dict]:
+        return self._q("SELECT * FROM momen ORDER BY substr(tanggal, -5), tanggal")
+
+    def hapus_momen(self, id: int) -> None:
+        self._tulis("DELETE FROM momen WHERE id = ?", (id,))
+
+    def momen_antara(self, mulai: date, selesai: date) -> list[dict]:
+        """Momen yang jatuh di rentang tanggal (momen berulang dihitung per tahun)."""
+        hasil = []
+        for m in self.daftar_momen():
+            if len(m["tanggal"]) == 10:
+                kandidat = [m["tanggal"]]
+            else:
+                kandidat = []
+                for th in range(mulai.year, selesai.year + 1):
+                    try:
+                        kandidat.append(date.fromisoformat(f"{th}-{m['tanggal']}").isoformat())
+                    except ValueError:  # 29 Feb di tahun biasa
+                        pass
+            for t in kandidat:
+                if mulai.isoformat() <= t <= selesai.isoformat():
+                    hasil.append({**m, "tanggal_jatuh": t, "sisa_hari": (date.fromisoformat(t) - date.today()).days})
+        return sorted(hasil, key=lambda x: x["tanggal_jatuh"])
+
+    def momen_mendatang(self, hari: int = 30) -> list[dict]:
+        return self.momen_antara(date.today(), date.today() + timedelta(days=hari))
+
+    # ---------------- Pengaturan umum ----------------
+
+    def pengaturan(self, kunci: str, default: str = "") -> str:
+        return self._pengaturan(kunci, default)
+
+    def simpan_pengaturan(self, kunci: str, nilai: str) -> None:
+        self._tulis("INSERT OR REPLACE INTO pengaturan VALUES (?, ?)", (kunci, nilai))
+
+    def bahan(self, id: int) -> dict:
+        b = self._satu("""SELECT x.*, b.judul AS buku_judul, b.penulis AS buku_penulis FROM bahan x
+                          JOIN buku b ON b.id = x.buku_id WHERE x.id = ?""", (id,))
+        if not b:
+            raise GagalValidasi(f"Bahan #{id} tidak ditemukan.")
+        return b
+
     # ---------------- Performa ----------------
 
     @staticmethod
@@ -593,6 +688,7 @@ class DB:
             "tugas_menunggu": self._q("SELECT id, permintaan FROM tugas WHERE status = 'Menunggu' ORDER BY id"),
             "bahan_belum_dipakai": self._satu("SELECT count(*) AS n FROM bahan WHERE dipakai = 0")["n"],
             "editan_belum_dipelajari": len(self.pasangan_editan(batas=20)),
+            "momen_mendatang": self.momen_mendatang(21),
             "posted_tanpa_angka": self._satu("""SELECT count(*) AS n FROM ide WHERE status = 'Posted'
                 AND coalesce(likes, komentar, simpan, share, jangkauan) IS NULL""")["n"],
         }
@@ -604,5 +700,6 @@ class DB:
                           WHERE i.jadwal LIKE ? ORDER BY i.jadwal""", (f"{bulan}-%",))
 
     def ekspor(self) -> dict:
-        tabel = ["buku", "bahan", "ide", "ide_bahan", "naskah_versi", "pertanyaan", "tugas", "pengaturan", "template"]
+        tabel = ["buku", "bahan", "ide", "ide_bahan", "naskah_versi", "pertanyaan", "tugas", "pengaturan",
+                 "template", "momen"]
         return {t: [dict(r) for r in self.c.execute(f"SELECT * FROM {t}")] for t in tabel}
