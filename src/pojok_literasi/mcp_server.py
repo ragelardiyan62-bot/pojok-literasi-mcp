@@ -27,6 +27,7 @@ JANGAN pernah mengarang pengalaman/opini user; naskah hanya dari bahan dan jawab
 Kalau bahan kurang, wawancarai user (satu pertanyaan per giliran).
 simpan_naskah menjalankan cek anti-AI; perbaiki temuan 'merah' bersama user.
 Ubah panduan suara HANYA setelah user menyetujui usulanmu.
+Setelah konten diposting, catat_performa. Pakai hook_terbukti untuk belajar pola hook yang berhasil.
 Kode: buku B-1, ide IDE-1, tugas T-1, bahan #1."""
 
 SUDUT = Literal[
@@ -96,6 +97,8 @@ def ringkasan_hari_ini() -> str:
             f"- {j['jadwal']} IDE-{j['id']} {j['judul']} [{j['status']}]" for j in r["jadwal_sepekan"]))
     if r["draft_mandek"]:
         baris.append("Mandek >7 hari: " + ", ".join(f"IDE-{d['id']} {d['judul']}" for d in r["draft_mandek"]))
+    if r["posted_tanpa_angka"]:
+        baris.append(f"{r['posted_tanpa_angka']} konten Posted belum ada angka performanya; minta user dari Insight IG.")
     if r["editan_belum_dipelajari"]:
         baris.append(f"Ada {r['editan_belum_dipelajari']} naskah yang kamu edit; jalankan pelajari_editan.")
     if r["tugas_menunggu"]:
@@ -214,7 +217,12 @@ def konteks_ide(kode_ide: str) -> str:
         out += [_f_bahan(x) for x in db().bahan_buku(b["id"])] or ["(kosong)"]
     elif i["bahan"]:
         out += ["Bahan terkait:"] + [_f_bahan(x) for x in i["bahan"]]
-    out += ["Naskah saat ini:", i["naskah"] or "(belum ada)", "", "=== PANDUAN SUARA ===", db().panduan_suara()]
+    out += [f"=== TEMPLATE {i['format'].upper()} ===", db().template(i["format"])[i["format"]],
+            "Naskah saat ini:", i["naskah"] or "(belum ada)", "", "=== PANDUAN SUARA ===", db().panduan_suara()]
+    hooks = db().hook_terbukti(3)
+    if hooks:
+        out += ["", "Hook terbukti (performa terbaik, untuk inspirasi pola, jangan disalin):"]
+        out += [f"- {h['hook']}" for h in hooks]
     return "\n".join(out)
 
 
@@ -307,6 +315,63 @@ def tandai_dipelajari(kode_ide: list[str]) -> str:
     return "Ditandai."
 
 
+# ---------------- Template & performa ----------------
+
+@mcp.tool()
+@_aman
+def template_format(format: FORMAT | None = None) -> str:
+    """Kerangka naskah per format (sudah termasuk di konteks_ide)."""
+    return "\n\n".join(f"== {k} ==\n{v}" for k, v in db().template(format).items())
+
+
+@mcp.tool()
+@_aman
+def catat_performa(kode_ide: str, likes: int | None = None, komentar: int | None = None,
+                   simpan: int | None = None, share: int | None = None, jangkauan: int | None = None,
+                   tanggal_posting: str | None = None) -> str:
+    """Catat angka dari Insight Instagram untuk konten yang sudah diposting. Status otomatis jadi Posted."""
+    i = db().ubah_ide(kode_ide, status="Posted", likes=likes, komentar=komentar, simpan=simpan,
+                      share=share, jangkauan=jangkauan, tanggal_posting=tanggal_posting)
+    s = db()._skor(i)
+    rasio = f", rasio interaksi {s['rasio']}%" if s["rasio"] is not None else ""
+    return f"IDE-{i['id']} tercatat: skor {s['skor']}{rasio}."
+
+
+@mcp.tool()
+@_aman
+def hook_terbukti(batas: int = 10) -> str:
+    """Hook dari konten dengan performa terbaik. Pakai untuk mempelajari POLA hook yang berhasil."""
+    h = db().hook_terbukti(batas)
+    return "\n".join(f"- [{x['sudut'] or '-'} | {x['format']} | skor {x['skor']}] {x['hook']}" for x in h) \
+        or "Belum ada data. Isi angka performa konten yang sudah Posted dulu."
+
+
+@mcp.tool()
+@_aman
+def laporan_mingguan(tanggal_akhir: str | None = None) -> str:
+    """Laporan 7 hari terakhir (atau 7 hari sampai tanggal_akhir YYYY-MM-DD): yang diposting,
+    performa per sudut/format, produktivitas, dan jadwal pekan depan."""
+    from datetime import date, timedelta
+    akhir = date.fromisoformat(tanggal_akhir) if tanggal_akhir else date.today()
+    L = db().laporan((akhir - timedelta(days=6)).isoformat(), akhir.isoformat())
+    st = L["statistik"]
+    out = [f"LAPORAN {L['mulai']} s/d {L['selesai']}",
+           f"Diposting: {len(L['diposting'])} | Ide baru: {L['ide_baru']} | Bahan baru: {L['bahan_baru']}"
+           f" | Pertanyaan baru: {L['pertanyaan_baru']}"
+           + (f" | Buku selesai: {', '.join(b['judul'] for b in L['buku_selesai'])}" if L["buku_selesai"] else "")]
+    if st["konten"]:
+        out.append("Performa (skor = likes + 2*komentar + 3*(simpan+share)):")
+        out += [f"- IDE-{k['id']} {k['judul']} | {k['sudut'] or '-'} | {k['format']} | skor {k['skor']}"
+                + (f" | {k['rasio']}%" if k["rasio"] is not None else "") for k in st["konten"]]
+        out.append("Rata skor per sudut: " + ", ".join(f"{g['nama']} {g['rata_skor']} ({g['jumlah']})" for g in st["per_sudut"]))
+        out.append("Rata skor per format: " + ", ".join(f"{g['nama']} {g['rata_skor']} ({g['jumlah']})" for g in st["per_format"]))
+    if L["belum_ada_angka"]:
+        out.append("Belum ada angka: " + ", ".join(f"IDE-{x['id']} {x['judul']}" for x in L["belum_ada_angka"]))
+    out.append("Jadwal pekan depan: " + (", ".join(f"{x['jadwal']} IDE-{x['id']} {x['judul']} [{x['status']}]"
+                                                   for x in L["jadwal_pekan_depan"]) or "kosong"))
+    return "\n".join(out)
+
+
 @mcp.tool()
 def cek_anti_ai(naskah: str) -> str:
     """Periksa ciri tulisan AI. Berjalan lokal tanpa memakai token model."""
@@ -352,6 +417,27 @@ def belajar_gaya() -> str:
     return ("Panggil pelajari_editan dan panduan_suara. Simpulkan pola: kata yang kubuang, kata yang kutambah, "
             "panjang kalimat, nada. Usulkan perubahan konkret untuk panduan suara (tunjukkan bagian yang "
             "berubah saja). Setelah aku setuju, perbarui_panduan_suara lalu tandai_dipelajari.")
+
+
+@mcp.prompt()
+def susun_panduan_suara() -> str:
+    """Susun panduan suara dari caption Instagram lama yang ditempel user."""
+    return ("Aku akan menempelkan beberapa caption Instagram Pojok Literasi yang sudah pernah diposting. "
+            "Kalau belum kutempel, minta dulu 5-10 caption (campur yang ramai dan yang biasa, dan yang kutulis sendiri, "
+            "bukan dibantu AI). Panggil panduan_suara untuk melihat formatnya. Analisis: sapaan, kata khas, panjang "
+            "kalimat, cara membuka dan menutup, nada, emoji. Isi panduan dengan format yang sama, pakai 3 caption "
+            "terbaik sebagai 'Contoh tulisan asliku', tambahkan kata yang tidak pernah kupakai ke daftar terlarang. "
+            "Tunjukkan draftnya, simpan dengan perbarui_panduan_suara HANYA setelah aku setuju.")
+
+
+@mcp.prompt()
+def evaluasi_mingguan() -> str:
+    """Evaluasi pekan ini dan rencana pekan depan."""
+    return ("Panggil laporan_mingguan dan hook_terbukti. Kalau ada konten Posted tanpa angka, minta angkanya "
+            "dariku (likes, komentar, simpan, share, jangkauan dari Insight IG) lalu catat_performa. Jelaskan "
+            "singkat: apa yang berhasil, apa yang tidak, dan kenapa (lihat sudut, format, hook). Lalu usulkan "
+            "3 ide untuk pekan depan dari bahan yang belum dipakai (bahan_buku / cari_bahan), dengan sudut dan "
+            "format yang terbukti berhasil. Simpan yang kupilih dengan simpan_ide dan atur jadwalnya.")
 
 
 # ---------------- Menjalankan ----------------

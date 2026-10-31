@@ -92,6 +92,13 @@ def buat_app(db: DB) -> Starlette:
         Route("/api/cek", api(lambda r, b: {
             "ringkas": anti_ai.ringkas(t := anti_ai.periksa(b.get("naskah", ""))),
             "temuan": [{"tingkat": x.tingkat, "pesan": x.pesan} for x in t]}), methods=["POST"]),
+        Route("/api/template", api(lambda r, b: db.template())),
+        Route("/api/template/{format}", api(lambda r, b: db.simpan_template(r.path_params["format"], b["kerangka"])
+                                            or {"ok": True}), methods=["PUT"]),
+        Route("/api/statistik", api(lambda r, b: db.statistik(r.query_params.get("mulai") or None,
+                                                             r.query_params.get("selesai") or None))),
+        Route("/api/hook", api(lambda r, b: db.hook_terbukti(20))),
+        Route("/api/laporan", api(lambda r, b: db.laporan(r.query_params["mulai"], r.query_params["selesai"]))),
         Route("/api/ekspor", api(lambda r, b: db.ekspor())),
     ]
     return Starlette(routes=routes)

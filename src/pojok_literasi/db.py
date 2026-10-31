@@ -109,7 +109,44 @@ CREATE TABLE IF NOT EXISTS pengaturan (
     kunci TEXT PRIMARY KEY,
     nilai TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS template (
+    format TEXT PRIMARY KEY,
+    kerangka TEXT NOT NULL
+);
 """
+
+# Kolom yang ditambahkan setelah Versi 1 (database lama di-upgrade otomatis).
+KOLOM_BARU = {
+    "ide": {
+        "likes": "INTEGER", "komentar": "INTEGER", "simpan": "INTEGER",
+        "share": "INTEGER", "jangkauan": "INTEGER", "tanggal_posting": "TEXT",
+    },
+}
+METRIK = ["likes", "komentar", "simpan", "share", "jangkauan"]
+
+TEMPLATE_AWAL = {
+    "Carousel": """Slide 1 (HOOK): kalimat yang bikin berhenti scroll, maks 8 kata
+Slide 2: konteks singkat (buku apa, kenapa aku baca)
+Slide 3-5: isi utama, satu poin per slide, kalimat pendek
+Slide 6: momen/perasaan pribadiku
+Slide terakhir: pertanyaan ke audiens + ajakan simpan/share
+
+Caption: 2-4 kalimat pelengkap, tutup dengan pertanyaan""",
+    "Reels": """0-3 detik (HOOK): kalimat pembuka langsung ke inti
+3-15 detik: cerita singkat / konteks
+15-40 detik: isi utama (1-3 poin)
+40-60 detik: perasaanku + ajakan komentar
+
+Teks di layar: hook ditulis besar di awal
+Caption: 1-2 kalimat + pertanyaan""",
+    "Single Post": """Visual: buku + 1 kalimat kuat di gambar
+Caption baris 1 (HOOK): terlihat sebelum 'selengkapnya'
+Caption isi: cerita pendek pengalamanku
+Penutup: pertanyaan ke audiens""",
+    "Story": """Story 1: hook / pertanyaan (pakai stiker polling/kuis)
+Story 2-3: isi singkat
+Story 4: ajakan (stiker pertanyaan / link postingan)""",
+}
 
 
 class GagalValidasi(ValueError):
@@ -150,8 +187,17 @@ class DB:
         self.c.execute("PRAGMA foreign_keys = ON")
         self.c.execute("PRAGMA journal_mode = WAL")  # aman dipakai MCP + web bersamaan
         self.c.executescript(SKEMA)
+        self._migrasi()
         self.c.execute("INSERT OR IGNORE INTO pengaturan VALUES ('panduan_suara', ?)", (PANDUAN_AWAL,))
+        self.c.executemany("INSERT OR IGNORE INTO template VALUES (?, ?)", TEMPLATE_AWAL.items())
         self.c.commit()
+
+    def _migrasi(self) -> None:
+        for tabel, kolom in KOLOM_BARU.items():
+            ada = {r[1] for r in self.c.execute(f"PRAGMA table_info({tabel})")}
+            for nama, tipe in kolom.items():
+                if nama not in ada:
+                    self.c.execute(f"ALTER TABLE {tabel} ADD COLUMN {nama} {tipe}")
 
     def _q(self, sql: str, args: tuple = ()) -> list[dict]:
         return [_baris(r) for r in self.c.execute(sql, args).fetchall()]
@@ -326,16 +372,22 @@ class DB:
 
     def ubah_ide(self, id: int | str, **ubah: Any) -> dict:
         d = self.ide(id)
-        boleh = {"judul", "sudut", "format", "hook", "status", "jadwal", "buku_id"}
-        ubah = {k: v for k, v in ubah.items() if k in boleh and v is not None}
+        kosongkan_jadwal = ubah.get("jadwal") == ""
+        boleh = {"judul", "sudut", "format", "hook", "status", "jadwal", "buku_id", "tanggal_posting", *METRIK}
+        ubah = {k: v for k, v in ubah.items() if k in boleh and v is not None and v != ""}
         _cek(ubah.get("status"), STATUS_IDE, "Status")
+        for m in METRIK:
+            if m in ubah:
+                ubah[m] = int(ubah[m])
+                if ubah[m] < 0:
+                    raise GagalValidasi(f"{m} tidak boleh negatif.")
+        if ubah.get("status") == "Posted" and not d.get("tanggal_posting") and "tanggal_posting" not in ubah:
+            ubah["tanggal_posting"] = d.get("jadwal") or date.today().isoformat()
         _cek(ubah.get("format"), FORMAT, "Format")
         if ubah.get("sudut"):
             _cek(ubah["sudut"], SUDUT, "Sudut")
-        if ubah.get("jadwal") == "":
-            ubah["jadwal"] = None
+        if kosongkan_jadwal:
             self.c.execute("UPDATE ide SET jadwal = NULL WHERE id = ?", (d["id"],))
-            del ubah["jadwal"]
         if ubah:
             kolom = ", ".join(f"{k} = ?" for k in ubah)
             self.c.execute(f"UPDATE ide SET {kolom}, diubah = datetime('now','localtime') WHERE id = ?",
@@ -444,6 +496,82 @@ class DB:
     def simpan_panduan_suara(self, teks: str) -> None:
         self._tulis("INSERT OR REPLACE INTO pengaturan VALUES ('panduan_suara', ?)", (teks,))
 
+    # ---------------- Template ----------------
+
+    def template(self, format: str | None = None) -> dict[str, str]:
+        rows = self._q("SELECT * FROM template ORDER BY format")
+        semua = {r["format"]: r["kerangka"] for r in rows}
+        if format:
+            _cek(format, FORMAT, "Format")
+            return {format: semua.get(format, "")}
+        return semua
+
+    def simpan_template(self, format: str, kerangka: str) -> None:
+        _cek(format, FORMAT, "Format")
+        self._tulis("INSERT OR REPLACE INTO template VALUES (?, ?)", (format, kerangka))
+
+    # ---------------- Performa ----------------
+
+    @staticmethod
+    def _skor(i: dict) -> dict:
+        interaksi = sum(i.get(k) or 0 for k in ("likes", "komentar", "simpan", "share"))
+        # simpan & share diberi bobot lebih: sinyal terkuat di algoritma Instagram
+        bobot = (i.get("likes") or 0) + 2 * (i.get("komentar") or 0) + 3 * ((i.get("simpan") or 0) + (i.get("share") or 0))
+        jangkauan = i.get("jangkauan") or 0
+        return {**i, "interaksi": interaksi, "skor": bobot,
+                "rasio": round(100 * interaksi / jangkauan, 1) if jangkauan else None}
+
+    def performa(self, mulai: str | None = None, selesai: str | None = None) -> list[dict]:
+        """Konten Posted yang sudah ada angkanya, diurutkan skor tertinggi."""
+        syarat, args = ["i.status = 'Posted'", "coalesce(i.likes, i.komentar, i.simpan, i.share, i.jangkauan) IS NOT NULL"], []
+        if mulai:
+            syarat.append("i.tanggal_posting >= ?"); args.append(mulai)
+        if selesai:
+            syarat.append("i.tanggal_posting <= ?"); args.append(selesai)
+        rows = self._q(f"""SELECT i.id, i.judul, i.sudut, i.format, i.hook, i.tanggal_posting,
+                                  i.likes, i.komentar, i.simpan, i.share, i.jangkauan, b.judul AS buku_judul
+                           FROM ide i LEFT JOIN buku b ON b.id = i.buku_id
+                           WHERE {' AND '.join(syarat)}""", tuple(args))
+        return sorted((self._skor(r) for r in rows), key=lambda r: r["skor"], reverse=True)
+
+    def statistik(self, mulai: str | None = None, selesai: str | None = None) -> dict:
+        data = self.performa(mulai, selesai)
+
+        def kelompok(kunci: str) -> list[dict]:
+            g: dict[str, list[dict]] = {}
+            for r in data:
+                g.setdefault(r[kunci] or "-", []).append(r)
+            hasil = [{"nama": k, "jumlah": len(v), "rata_skor": round(sum(x["skor"] for x in v) / len(v), 1)}
+                     for k, v in g.items()]
+            return sorted(hasil, key=lambda x: x["rata_skor"], reverse=True)
+
+        return {"konten": data, "per_sudut": kelompok("sudut"), "per_format": kelompok("format")}
+
+    def hook_terbukti(self, batas: int = 10) -> list[dict]:
+        """Hook dari konten Posted dengan skor tertinggi."""
+        return [r for r in self.performa() if (r["hook"] or "").strip()][:batas]
+
+    def laporan(self, mulai: str, selesai: str) -> dict:
+        rentang = (mulai, selesai + " 23:59:59")
+        hitung = lambda sql: self._satu(sql, rentang)["n"]
+        return {
+            "mulai": mulai, "selesai": selesai,
+            "diposting": self._q("""SELECT id, judul, sudut, format, tanggal_posting FROM ide
+                                    WHERE status = 'Posted' AND tanggal_posting BETWEEN ? AND ?
+                                    ORDER BY tanggal_posting""", (mulai, selesai)),
+            "statistik": self.statistik(mulai, selesai),
+            "bahan_baru": hitung("SELECT count(*) AS n FROM bahan WHERE dibuat BETWEEN ? AND ?"),
+            "ide_baru": hitung("SELECT count(*) AS n FROM ide WHERE dibuat BETWEEN ? AND ?"),
+            "pertanyaan_baru": hitung("SELECT count(*) AS n FROM pertanyaan WHERE dibuat BETWEEN ? AND ?"),
+            "buku_selesai": self._q("SELECT id, judul FROM buku WHERE tanggal_selesai BETWEEN ? AND ?",
+                                    (mulai, selesai)),
+            "belum_ada_angka": self._q("""SELECT id, judul FROM ide WHERE status = 'Posted'
+                                          AND coalesce(likes, komentar, simpan, share, jangkauan) IS NULL"""),
+            "jadwal_pekan_depan": self._q("""SELECT id, judul, jadwal, status FROM ide WHERE jadwal > ?
+                                             AND jadwal <= date(?, '+7 day') ORDER BY jadwal""",
+                                          (selesai, selesai)),
+        }
+
     # ---------------- Ringkasan ----------------
 
     def ringkasan(self) -> dict:
@@ -465,6 +593,8 @@ class DB:
             "tugas_menunggu": self._q("SELECT id, permintaan FROM tugas WHERE status = 'Menunggu' ORDER BY id"),
             "bahan_belum_dipakai": self._satu("SELECT count(*) AS n FROM bahan WHERE dipakai = 0")["n"],
             "editan_belum_dipelajari": len(self.pasangan_editan(batas=20)),
+            "posted_tanpa_angka": self._satu("""SELECT count(*) AS n FROM ide WHERE status = 'Posted'
+                AND coalesce(likes, komentar, simpan, share, jangkauan) IS NULL""")["n"],
         }
 
     def kalender(self, bulan: str) -> list[dict]:
@@ -474,5 +604,5 @@ class DB:
                           WHERE i.jadwal LIKE ? ORDER BY i.jadwal""", (f"{bulan}-%",))
 
     def ekspor(self) -> dict:
-        tabel = ["buku", "bahan", "ide", "ide_bahan", "naskah_versi", "pertanyaan", "tugas", "pengaturan"]
+        tabel = ["buku", "bahan", "ide", "ide_bahan", "naskah_versi", "pertanyaan", "tugas", "pengaturan", "template"]
         return {t: [dict(r) for r in self.c.execute(f"SELECT * FROM {t}")] for t in tabel}

@@ -14,7 +14,7 @@ Claude Desktop ──MCP──► pojok-literasi ──► ~/PojokLiterasi/pojok
 Browser (kamu) ◄──────────────┘  dashboard http://localhost:8765
 ```
 
-## Fitur (Versi 1)
+## Fitur
 
 **Untuk kamu, di dashboard:**
 | Fitur | Keterangan |
@@ -25,15 +25,16 @@ Browser (kamu) ◄──────────────┘  dashboard http:
 | Ide & Naskah | Papan kanban Ide → Wawancara → Draft → Siap → Posted, dengan 8 sudut konten |
 | Editor naskah | Cek anti-AI langsung saat mengetik, hitung kata, dan riwayat versi (🤖 agent vs ✍️ kamu) |
 | Kalender | Jadwal posting per bulan |
+| Performa | Angka dari Insight IG, skor per konten, rata-rata per sudut/format, bank hook terbukti |
 | Audiens | Pertanyaan dari komentar, DM, dan Story |
 | Agent | Titip tugas untuk agent dan lihat hasilnya |
-| Panduan Suara | Gaya bahasamu, dibaca agent setiap kali menulis |
+| Suara & Template | Gaya bahasamu + kerangka naskah per format (Carousel, Reels, Single Post, Story) |
 
 **Untuk agent, lewat MCP:**
 | Tool | Fungsi |
 |---|---|
 | `ringkasan_hari_ini` | Kondisi terkini + tugas titipan, cukup satu panggilan |
-| `konteks_ide` | Ide, bahan buku, naskah, dan panduan suara sekaligus |
+| `konteks_ide` | Ide, bahan buku, naskah, template format, hook terbukti, dan panduan suara sekaligus |
 | `catat_bahan`, `bahan_buku`, `cari_bahan` | Bahan mentah |
 | `simpan_ide`, `daftar_ide`, `ubah_ide` | Ide konten |
 | `simpan_naskah` | Simpan sebagai versi "agent" + cek anti-AI otomatis |
@@ -42,6 +43,10 @@ Browser (kamu) ◄──────────────┘  dashboard http:
 | `selesaikan_tugas` | Menutup tugas yang kamu titipkan |
 | `tambah_buku`, `update_buku`, `daftar_buku` | Rak buku |
 | `catat_pertanyaan`, `pertanyaan_terbuka`, `jawab_pertanyaan` | Pertanyaan audiens |
+| `catat_performa` | Simpan angka Insight IG (likes, komentar, simpan, share, jangkauan) |
+| `hook_terbukti` | Hook dari konten dengan skor tertinggi |
+| `laporan_mingguan` | Rekap 7 hari: yang diposting, performa per sudut/format, jadwal pekan depan |
+| `template_format` | Kerangka naskah per format |
 | `cek_anti_ai` | Berjalan lokal, tanpa token |
 
 **Prompt siap pakai.** Di kotak chat Claude Desktop, klik **+** lalu pilih **pojok-literasi**:
@@ -49,6 +54,8 @@ Browser (kamu) ◄──────────────┘  dashboard http:
 - `cari_ide`: ide konten dari satu buku dengan 8 sudut
 - `wawancara`: agent bertanya dulu, lalu menulis naskah hanya dari jawabanmu
 - `belajar_gaya`: agent mempelajari editanmu dan mengusulkan pembaruan panduan suara
+- `susun_panduan_suara`: tempel caption lamamu, agent menyusun panduan suara dari situ
+- `evaluasi_mingguan`: evaluasi pekan ini + 3 ide untuk pekan depan
 
 ## Alur kerja harian
 
@@ -59,6 +66,11 @@ Browser (kamu) ◄──────────────┘  dashboard http:
 4. **Edit**: rapikan naskah di editor dashboard sampai cek anti-AI berwarna hijau.
 5. **Belajar**: sesekali jalankan `belajar_gaya`, supaya draft berikutnya makin mirip gayamu.
 6. **Jadwalkan**: atur tanggal posting di editor, lalu pantau di Kalender.
+7. **Setelah posting**: 2-3 hari kemudian, isi angka dari Insight IG di editor ide.
+8. **Akhir pekan**: jalankan `evaluasi_mingguan`, supaya ide pekan depan berbasis data.
+
+> **Skor** = likes + 2×komentar + 3×(simpan + share). Simpan dan share diberi bobot lebih
+> karena menandakan konten benar-benar berguna bagi pembaca.
 
 ## Instalasi (sekali saja)
 

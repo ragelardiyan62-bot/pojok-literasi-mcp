@@ -78,6 +78,19 @@ label.f { display: flex; flex-direction: column; gap: 3px; font-size: 13px; colo
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 100; }
 .toast.on { opacity: 1; }
 pre.versi { white-space: pre-wrap; background: var(--bg); padding: 10px; border-radius: 8px; font: inherit; font-size: 14px; }
+.batang { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+.batang .nama { flex: 0 0 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batang .isi { flex: 1; background: var(--bg); border-radius: 6px; height: 18px; overflow: hidden; }
+.batang .isi span { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
+.batang .nilai { flex: 0 0 64px; text-align: right; font-variant-numeric: tabular-nums; }
+table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.t th, table.t td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+table.t th { color: var(--muted); font-weight: 600; font-size: 12px; }
+table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.gulir { overflow-x: auto; }
+.metrik { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.metrik label.f { white-space: nowrap; }
+.metrik input { width: 100%; }
 .kosong-info { padding: 24px; text-align: center; color: var(--muted); }
 @media (max-width: 800px) {
   .editor { grid-template-columns: 1fr; }
@@ -109,7 +122,7 @@ pre.versi { white-space: pre-wrap; background: var(--bg); padding: 10px; border-
 <script>
 const HALAMAN = [
   ["beranda", "Beranda"], ["buku", "Buku"], ["bahan", "Bahan"], ["ide", "Ide & Naskah"],
-  ["kalender", "Kalender"], ["audiens", "Audiens"], ["agent", "Agent"], ["suara", "Panduan Suara"],
+  ["kalender", "Kalender"], ["performa", "Performa"], ["audiens", "Audiens"], ["agent", "Agent"], ["suara", "Suara & Template"],
 ];
 const WARNA_STATUS = { Ide: "--s-ide", Wawancara: "--s-wawancara", Draft: "--s-draft", Siap: "--s-siap", Posted: "--s-posted" };
 let META = {}, BUKU = [], FILTER_BAHAN = {}, halaman = "beranda", bulanKal = new Date().toISOString().slice(0, 7);
@@ -175,6 +188,7 @@ const VIEW = {
         <p class="kecil muted">Buka Claude Desktop dan pilih prompt <b>mulai_hari</b> agar agent mengerjakannya.</p></div>
       <div class="kartu"><h3>🧺 Stok bahan</h3><div class="angka">${r.bahan_belum_dipakai}</div><div class="muted kecil">bahan belum dipakai jadi konten</div>
         <div style="margin-top:8px" class="kecil">${r.pertanyaan_terbuka} pertanyaan audiens terbuka</div>
+        ${r.posted_tanpa_angka ? `<div style="margin-top:8px" class="kecil">📊 ${r.posted_tanpa_angka} konten Posted belum ada angka performanya. Isi di editor ide.</div>` : ""}
         ${r.editan_belum_dipelajari ? `<div style="margin-top:8px" class="kecil">✍️ ${r.editan_belum_dipelajari} naskah sudah kamu edit. Jalankan prompt <b>belajar_gaya</b> di Claude.</div>` : ""}</div>
     </div>`;
   },
@@ -247,6 +261,33 @@ const VIEW = {
       <div class="kal">${sel}</div><p class="kecil muted">Atur jadwal dari editor ide.</p>`;
   },
 
+  async performa() {
+    const hariIni = new Date(), awal = new Date(hariIni - 6 * 864e5);
+    const iso = d => d.toISOString().slice(0, 10);
+    const [st, lap, hooks] = await Promise.all([api("/statistik"), api(`/laporan?mulai=${iso(awal)}&selesai=${iso(hariIni)}`), api("/hook")]);
+    if (!st.konten.length) return `<h2>Performa</h2><div class="kosong-info">Belum ada data performa.<br>Setelah konten diposting, buka idenya lalu isi angka dari Insight Instagram (likes, komentar, simpan, share, jangkauan).</div>`;
+    const batang = (arr) => { const max = Math.max(...arr.map(g => g.rata_skor), 1);
+      return arr.map(g => `<div class="batang"><span class="nama" title="${esc(g.nama)}">${esc(g.nama)}</span><span class="isi"><span style="width:${(100 * g.rata_skor / max).toFixed(0)}%"></span></span><span class="nilai">${g.rata_skor} <span class="muted">(${g.jumlah})</span></span></div>`).join(""); };
+    return `<h2>Performa</h2>
+    <div class="grid">
+      <div class="kartu"><h3>📅 7 hari terakhir</h3>
+        <div class="pipa"><div><div class="angka">${lap.diposting.length}</div><div class="kecil muted">diposting</div></div>
+        <div><div class="angka">${lap.ide_baru}</div><div class="kecil muted">ide baru</div></div>
+        <div><div class="angka">${lap.bahan_baru}</div><div class="kecil muted">bahan baru</div></div></div>
+        <p class="kecil muted">Minta analisis lengkap ke agent dengan prompt <b>evaluasi_mingguan</b>.</p></div>
+      <div class="kartu"><h3>Rata-rata skor per sudut</h3>${batang(st.per_sudut)}</div>
+      <div class="kartu"><h3>Rata-rata skor per format</h3>${batang(st.per_format)}</div>
+    </div>
+    <div class="kartu" style="margin-top:14px"><h3>🪝 Bank hook terbukti</h3>
+      ${hooks.length ? `<div class="daftar">${hooks.slice(0, 8).map(h => `<div class="klik" data-ide="${h.id}">“${esc(h.hook)}” <span class="muted kecil">· ${esc(h.sudut || "-")} · skor ${h.skor}</span></div>`).join("")}</div>` : `<div class="muted kecil">Isi kolom hook di ide yang sudah diposting.</div>`}</div>
+    <div class="kartu gulir" style="margin-top:14px"><h3>Semua konten (skor tertinggi dulu)</h3>
+      <table class="t"><thead><tr><th>Konten</th><th>Sudut</th><th>Format</th><th>Tanggal</th><th>❤️</th><th>💬</th><th>🔖</th><th>↗️</th><th>Jangkauan</th><th>Skor</th></tr></thead><tbody>
+      ${st.konten.map(k => `<tr class="klik" data-ide="${k.id}"><td><b>${esc(k.judul)}</b></td><td class="kecil">${esc(k.sudut || "-")}</td><td class="kecil">${esc(k.format)}</td><td class="kecil">${esc(k.tanggal_posting || "")}</td>
+        <td class="n">${k.likes ?? "-"}</td><td class="n">${k.komentar ?? "-"}</td><td class="n">${k.simpan ?? "-"}</td><td class="n">${k.share ?? "-"}</td><td class="n">${k.jangkauan ?? "-"}</td><td class="n"><b>${k.skor}</b>${k.rasio != null ? `<div class="kecil muted">${k.rasio}%</div>` : ""}</td></tr>`).join("")}
+      </tbody></table>
+      <p class="kecil muted">Skor = likes + 2×komentar + 3×(simpan + share). Simpan dan share diberi bobot lebih karena menunjukkan konten benar-benar berguna. Persen = interaksi ÷ jangkauan.</p></div>`;
+  },
+
   async audiens() {
     const data = await api("/pertanyaan?semua=1");
     return `<h2>Pertanyaan Audiens</h2>
@@ -277,12 +318,16 @@ const VIEW = {
   },
 
   async suara() {
-    const { teks } = await api("/panduan");
+    const [{ teks }, tpl] = await Promise.all([api("/panduan"), api("/template")]);
     return `<h2>Panduan Suara</h2>
     <p class="muted">Agent membaca ini setiap kali menulis naskah. Isi dengan gayamu sendiri dan contoh caption terbaikmu. Prompt <b>belajar_gaya</b> akan mengusulkan perbaikan berdasarkan editanmu.</p>
     <textarea id="teksPanduan" rows="22">${esc(teks)}</textarea>
     <div class="baris" style="margin-top:10px"><button class="u" id="simpanPanduan">Simpan</button>
-      <span class="kecil muted">Data tersimpan di: ${esc(META.lokasi_db)}</span></div>`;
+      <span class="kecil muted">Data tersimpan di: ${esc(META.lokasi_db)}</span></div>
+    <h2 style="margin-top:28px">Template per Format</h2>
+    <p class="muted">Kerangka naskah yang dipakai agent dan bisa kamu isi lewat tombol "Isi kerangka" di editor.</p>
+    <div class="grid">${META.format.map(f => `<div class="kartu"><h3>${esc(f)}</h3><textarea rows="9" data-tpl="${esc(f)}">${esc(tpl[f] || "")}</textarea>
+      <button class="g" style="margin-top:8px" data-simpan-tpl="${esc(f)}">Simpan ${esc(f)}</button></div>`).join("")}</div>`;
   },
 };
 
@@ -348,7 +393,14 @@ const IKAT = {
     m.querySelectorAll("[data-jawab]").forEach(c => c.onchange = async () => { await api(`/pertanyaan/${c.dataset.jawab}`, "PATCH", { dijawab: c.checked }); render(); });
   },
   agent() { $("#formTugas").onsubmit = async e => { e.preventDefault(); await api("/tugas", "POST", formJSON(e.target)); toast("Dititipkan ke agent"); render(); }; },
-  suara() { $("#simpanPanduan").onclick = async () => { await api("/panduan", "PUT", { teks: $("#teksPanduan").value }); toast("Panduan disimpan"); }; },
+  suara(m) {
+    $("#simpanPanduan").onclick = async () => { await api("/panduan", "PUT", { teks: $("#teksPanduan").value }); toast("Panduan disimpan"); };
+    m.querySelectorAll("[data-simpan-tpl]").forEach(b => b.onclick = async () => {
+      const f = b.dataset.simpanTpl;
+      await api(`/template/${encodeURIComponent(f)}`, "PUT", { kerangka: m.querySelector(`[data-tpl="${CSS.escape(f)}"]`).value }); toast(`Template ${f} disimpan`);
+    });
+  },
+  performa: ikatUmum,
 };
 
 /* ---------------- Modal: Buku ---------------- */
@@ -381,6 +433,7 @@ async function bukaIde(id) {
       <label class="f" style="margin-top:8px">Hook (kalimat pembuka)<input id="iHook" value="${esc(i.hook)}"></label>
       <label class="f" style="margin-top:8px">Naskah <span id="hitung"></span><textarea class="naskah" id="iNaskah" placeholder="Tulis atau tempel naskah di sini. Cek anti-AI berjalan otomatis.">${esc(i.naskah)}</textarea></label>
       <div class="baris" style="margin-top:10px"><button class="u" id="iSimpan">Simpan</button>
+        <button class="g" id="iKerangka" title="Sisipkan kerangka template sesuai format">Isi kerangka ${esc(i.format)}</button>
         <button class="g bahaya" id="iHapus">Hapus ide</button></div>
       ${i.bahan.length ? `<h3 style="margin-top:18px">Bahan yang dipakai</h3><div class="daftar kecil">${i.bahan.map(x => `<div>${esc(x.isi)}</div>`).join("")}</div>` : ""}
     </div><div>
@@ -391,6 +444,11 @@ async function bukaIde(id) {
       <label class="f" style="margin-top:8px">Sudut<select id="iSudut">${opsi(META.sudut, i.sudut, "-")}</select></label>
       <label class="f" style="margin-top:8px">Buku<select id="iBuku">${opsi(BUKU.map(b => [b.id, b.judul]), i.buku_id, "Tanpa buku")}</select></label>
       <label class="f" style="margin-top:8px">Jadwal posting<input type="date" id="iJadwal" value="${esc(i.jadwal || "")}"></label>
+      <h3 style="margin-top:16px">📊 Performa <span class="kecil muted">(dari Insight IG)</span></h3>
+      <div class="metrik">${[["likes", "❤️ Likes"], ["komentar", "💬 Komentar"], ["simpan", "🔖 Simpan"], ["share", "↗️ Share"], ["jangkauan", "👀 Jangkauan"]].map(([k, l]) =>
+        `<label class="f">${l}<input type="number" min="0" data-metrik="${k}" value="${i[k] ?? ""}"></label>`).join("")}
+        <label class="f">Diposting<input type="date" id="iTglPosting" value="${esc(i.tanggal_posting || "")}"></label></div>
+      <div class="kecil muted" style="margin-top:4px">Mengisi angka otomatis memindahkan status ke Posted.</div>
       <h3 style="margin-top:16px">Riwayat naskah</h3>
       <div class="daftar kecil">${i.versi.map(v => `<div class="baris" style="justify-content:space-between"><span>${v.oleh === "agent" ? "🤖 agent" : "✍️ kamu"} · ${esc(v.dibuat)}</span><button class="g kecil" data-versi="${v.id}">Lihat</button></div>`).join("") || `<div class="muted">Belum ada.</div>`}</div>
       <div id="lihatVersi"></div>
@@ -412,8 +470,16 @@ async function bukaIde(id) {
   $("#iSimpan").onclick = async () => {
     await api(`/ide/${id}`, "PATCH", { judul: $("#iJudul").value, hook: $("#iHook").value, status: $("#iStatus").value,
       format: $("#iFormat").value, sudut: $("#iSudut").value, jadwal: $("#iJadwal").value, buku_id: $("#iBuku").value ? +$("#iBuku").value : null });
+    const metrik = {};
+    document.querySelectorAll("[data-metrik]").forEach(el => { if (el.value !== "" && +el.value !== i[el.dataset.metrik]) metrik[el.dataset.metrik] = +el.value; });
+    if ($("#iTglPosting").value && $("#iTglPosting").value !== (i.tanggal_posting || "")) metrik.tanggal_posting = $("#iTglPosting").value;
+    if (Object.keys(metrik).length) await api(`/ide/${id}`, "PATCH", { ...metrik, ...(Object.keys(metrik).some(k => k !== "tanggal_posting") ? { status: "Posted" } : {}) });
     if (ta.value.trim() !== i.naskah.trim()) await api(`/ide/${id}/naskah`, "POST", { naskah: ta.value });
     toast("Tersimpan ✓"); bukaIde(id);
+  };
+  $("#iKerangka").onclick = async () => {
+    const tpl = (await api("/template"))[$("#iFormat").value] || "";
+    ta.value = ta.value.trim() ? ta.value + "\n\n" + tpl : tpl; ta.focus(); cek();
   };
   $("#iHapus").onclick = async () => { if (confirm("Hapus ide ini?")) { await api(`/ide/${id}`, "DELETE"); d.close(); render(); } };
   document.querySelectorAll("[data-versi]").forEach(b => b.onclick = () => {
