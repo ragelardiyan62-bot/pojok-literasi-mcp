@@ -1,4 +1,4 @@
-from pojok_literasi_mcp.anti_ai import periksa, ringkas
+from pojok_literasi.anti_ai import periksa, ringkas
 
 
 def test_naskah_ala_ai_ditandai():

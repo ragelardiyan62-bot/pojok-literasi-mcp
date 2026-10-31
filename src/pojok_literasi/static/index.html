@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pojok Literasi</title>
+<style>
+:root {
+  --bg: #f7f4ee; --panel: #ffffff; --ink: #2b2620; --muted: #7a7064; --line: #e6dfd3;
+  --accent: #9a4a2b; --accent-soft: #f3e3da; --ok: #2f7a4f; --warn: #b07a12; --bad: #b3362b;
+  --s-ide: #8a8073; --s-wawancara: #b07a12; --s-draft: #2e65a8; --s-siap: #7a4bb0; --s-posted: #2f7a4f;
+  --radius: 10px; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1916; --panel: #24211d; --ink: #ece6dc; --muted: #a39887; --line: #3a352e;
+    --accent: #e08a62; --accent-soft: #3d2a20; --ok: #6cc28f; --warn: #e2b24f; --bad: #ef7d72;
+    --s-ide: #a39887; --s-wawancara: #e2b24f; --s-draft: #78a9e8; --s-siap: #b996e6; --s-posted: #6cc28f;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { position: sticky; top: 0; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1200px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.logo { font-weight: 700; font-size: 18px; color: var(--accent); white-space: nowrap; }
+nav { display: flex; gap: 2px; overflow-x: auto; flex: 1; }
+nav button { background: none; border: 0; padding: 8px 12px; border-radius: 8px; color: var(--muted); font: inherit; cursor: pointer; white-space: nowrap; }
+nav button.aktif { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.tangkap { border-top: 1px solid var(--line); background: var(--bg); }
+.tangkap form { max-width: 1200px; margin: 0 auto; padding: 8px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+.tangkap input[name=isi] { flex: 1 1 280px; }
+main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+h2 { margin: 0 0 14px; font-size: 20px; }
+h3 { margin: 0 0 10px; font-size: 15px; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.kartu { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
+.kartu.klik { cursor: pointer; } .kartu.klik:hover { border-color: var(--accent); }
+.muted { color: var(--muted); } .kecil { font-size: 13px; }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; max-width: 100%; }
+textarea { width: 100%; resize: vertical; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button.u, .u { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+button.g { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+button.g:hover { border-color: var(--accent); }
+button.bahaya { color: var(--bad); }
+.baris { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.lencana { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); margin: 0 4px 4px 0; }
+.status { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 99px; color: #fff; }
+.angka { font-size: 28px; font-weight: 700; }
+.pipa { display: flex; gap: 8px; flex-wrap: wrap; }
+.pipa div { flex: 1 1 80px; text-align: center; padding: 8px; border-radius: 8px; background: var(--bg); }
+.kanban { display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.kolom { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; min-height: 200px; }
+.kolom.over { outline: 2px dashed var(--accent); }
+.kolom h3 { display: flex; justify-content: space-between; }
+.kartu-ide { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; margin-bottom: 8px; cursor: grab; }
+.kartu-ide:hover { border-color: var(--accent); }
+.daftar > div { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.daftar > div:last-child { border-bottom: 0; }
+.kal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.kal .hari { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-height: 92px; padding: 6px; font-size: 13px; }
+.kal .hari.kosong { background: none; border: 0; }
+.kal .hari.ini { border-color: var(--accent); }
+.kal .chip { display: block; font-size: 12px; border-radius: 6px; padding: 2px 6px; margin-top: 3px; color: #fff; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kal .kepala { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; }
+dialog { border: 0; border-radius: 14px; padding: 0; width: min(1100px, 96vw); max-height: 94vh; background: var(--panel); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+.modal-isi { padding: 20px; overflow: auto; max-height: 94vh; }
+.editor { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
+.editor textarea.naskah { min-height: 340px; font-size: 16px; line-height: 1.7; }
+.temuan div { font-size: 13px; padding: 6px 8px; border-radius: 6px; margin-bottom: 6px; background: var(--bg); border-left: 3px solid var(--warn); }
+.temuan div.merah { border-left-color: var(--bad); }
+.temuan .lolos { border-left-color: var(--ok); }
+label.f { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
+.dua { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 100; }
+.toast.on { opacity: 1; }
+pre.versi { white-space: pre-wrap; background: var(--bg); padding: 10px; border-radius: 8px; font: inherit; font-size: 14px; }
+.kosong-info { padding: 24px; text-align: center; color: var(--muted); }
+@media (max-width: 800px) {
+  .editor { grid-template-columns: 1fr; }
+  .dua { grid-template-columns: 1fr; }
+  .kal .hari { min-height: 60px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="logo">📚 Pojok Literasi</div>
+    <nav id="nav"></nav>
+  </div>
+  <div class="tangkap">
+    <form id="formTangkap" autocomplete="off">
+      <select name="buku_id" required title="Buku"></select>
+      <select name="jenis" title="Jenis"></select>
+      <input name="isi" placeholder="Tangkap cepat: reaksi, kutipan, atau cerita… (Enter untuk simpan)" required>
+      <input name="lokasi" placeholder="Hal/Bab" size="7">
+      <button class="u">Simpan</button>
+    </form>
+  </div>
+</header>
+<main id="main"></main>
+<dialog id="modal"><div class="modal-isi" id="modalIsi"></div></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const HALAMAN = [
+  ["beranda", "Beranda"], ["buku", "Buku"], ["bahan", "Bahan"], ["ide", "Ide & Naskah"],
+  ["kalender", "Kalender"], ["audiens", "Audiens"], ["agent", "Agent"], ["suara", "Panduan Suara"],
+];
+const WARNA_STATUS = { Ide: "--s-ide", Wawancara: "--s-wawancara", Draft: "--s-draft", Siap: "--s-siap", Posted: "--s-posted" };
+let META = {}, BUKU = [], FILTER_BAHAN = {}, halaman = "beranda", bulanKal = new Date().toISOString().slice(0, 7);
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const opsi = (list, pilih, kosong) => (kosong !== undefined ? `<option value="">${esc(kosong)}</option>` : "") +
+  list.map(v => { const [val, lbl] = Array.isArray(v) ? v : [v, v]; return `<option value="${esc(val)}" ${String(val) === String(pilih ?? "") ? "selected" : ""}>${esc(lbl)}</option>`; }).join("");
+const lencanaStatus = s => `<span class="status" style="background:var(${WARNA_STATUS[s] || "--muted"})">${esc(s)}</span>`;
+
+function toast(pesan) { const t = $("#toast"); t.textContent = pesan; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2200); }
+
+async function api(path, method = "GET", body) {
+  const r = await fetch("/api" + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json();
+  if (!r.ok) { toast("⚠️ " + (data.error || "Gagal")); throw new Error(data.error); }
+  return data;
+}
+
+async function muatBuku() {
+  BUKU = await api("/buku");
+  const f = $("#formTangkap");
+  const aktif = BUKU.filter(b => b.status === "Sedang Dibaca").concat(BUKU.filter(b => b.status !== "Sedang Dibaca"));
+  f.buku_id.innerHTML = BUKU.length ? opsi(aktif.map(b => [b.id, b.judul]), f.buku_id.value || aktif[0]?.id) : `<option value="">Tambah buku dulu</option>`;
+}
+
+$("#formTangkap").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = e.target;
+  if (!f.buku_id.value) { pindah("buku"); return; }
+  await api("/bahan", "POST", { buku_id: +f.buku_id.value, jenis: f.jenis.value, isi: f.isi.value, lokasi: f.lokasi.value });
+  f.isi.value = ""; f.lokasi.value = "";
+  toast("Tersimpan ✓");
+  if (["beranda", "bahan"].includes(halaman)) render();
+});
+
+function pindah(h) { halaman = h; location.hash = h; render(); }
+function renderNav() {
+  $("#nav").innerHTML = HALAMAN.map(([k, l]) => `<button class="${k === halaman ? "aktif" : ""}" data-h="${k}">${l}</button>`).join("");
+  $("#nav").querySelectorAll("button").forEach(b => b.onclick = () => pindah(b.dataset.h));
+}
+
+async function render() {
+  renderNav();
+  const m = $("#main");
+  try { m.innerHTML = await VIEW[halaman](); IKAT[halaman]?.(m); }
+  catch (e) { m.innerHTML = `<div class="kosong-info">Gagal memuat: ${esc(e.message)}</div>`; }
+}
+
+/* ---------------- VIEW ---------------- */
+const VIEW = {
+  async beranda() {
+    const r = await api("/ringkasan");
+    const pipa = Object.entries(r.ide_per_status).map(([s, n]) => `<div><div class="angka" style="color:var(${WARNA_STATUS[s]})">${n}</div><div class="kecil muted">${s}</div></div>`).join("");
+    const daftar = (arr, f, kosong) => arr.length ? `<div class="daftar">${arr.map(f).join("")}</div>` : `<div class="muted kecil">${kosong}</div>`;
+    return `<h2>Halo! Ini kondisi Pojok Literasi hari ini</h2>
+    <div class="grid">
+      <div class="kartu" style="grid-column:1/-1"><h3>Pipeline konten</h3><div class="pipa">${pipa}</div></div>
+      <div class="kartu"><h3>📖 Sedang dibaca</h3>${daftar(r.sedang_dibaca, b => `<div class="klik" data-buku="${b.id}"><b>${esc(b.judul)}</b> <span class="muted kecil">${esc(b.penulis)}</span></div>`, "Belum ada. Tambahkan di tab Buku.")}</div>
+      <div class="kartu"><h3>🗓️ Jadwal 7 hari</h3>${daftar(r.jadwal_sepekan, j => `<div data-ide="${j.id}" class="klik">${esc(j.jadwal)} · <b>${esc(j.judul)}</b> ${lencanaStatus(j.status)}</div>`, "Belum ada jadwal posting.")}</div>
+      <div class="kartu"><h3>⏳ Mandek lebih dari 7 hari</h3>${daftar(r.draft_mandek, d => `<div data-ide="${d.id}" class="klik">IDE-${d.id} ${esc(d.judul)}</div>`, "Tidak ada. Mantap!")}</div>
+      <div class="kartu"><h3>🤖 Tugas untuk agent</h3>${daftar(r.tugas_menunggu, t => `<div>T-${t.id} ${esc(t.permintaan)}</div>`, "Tidak ada tugas menunggu.")}
+        <p class="kecil muted">Buka Claude Desktop dan pilih prompt <b>mulai_hari</b> agar agent mengerjakannya.</p></div>
+      <div class="kartu"><h3>🧺 Stok bahan</h3><div class="angka">${r.bahan_belum_dipakai}</div><div class="muted kecil">bahan belum dipakai jadi konten</div>
+        <div style="margin-top:8px" class="kecil">${r.pertanyaan_terbuka} pertanyaan audiens terbuka</div>
+        ${r.editan_belum_dipelajari ? `<div style="margin-top:8px" class="kecil">✍️ ${r.editan_belum_dipelajari} naskah sudah kamu edit. Jalankan prompt <b>belajar_gaya</b> di Claude.</div>` : ""}</div>
+    </div>`;
+  },
+
+  async buku() {
+    await muatBuku();
+    const kartu = BUKU.map(b => `<div class="kartu klik" data-buku="${b.id}">
+      <div class="baris" style="justify-content:space-between"><b>${esc(b.judul)}</b><span class="muted kecil">B-${b.id}</span></div>
+      <div class="muted kecil">${esc(b.penulis || "Penulis ?")}</div>
+      <div style="margin:6px 0"><span class="lencana">${esc(b.status)}</span>${b.rating ? `<span class="lencana">★ ${b.rating}</span>` : ""}${b.genre.map(g => `<span class="lencana">${esc(g)}</span>`).join("")}</div>
+      ${b.kesan ? `<div class="kecil">“${esc(b.kesan)}”</div>` : ""}
+      <div class="kecil muted">${b.jumlah_bahan} bahan · ${b.jumlah_ide} ide</div></div>`).join("");
+    return `<h2>Rak Buku</h2>
+    <form class="form" id="formBuku"><input name="judul" placeholder="Judul buku" required><input name="penulis" placeholder="Penulis">
+      <select name="status">${opsi(META.status_buku, "Sedang Dibaca")}</select><input name="genre" placeholder="Genre (pisah koma)"><button class="u">Tambah</button></form>
+    ${BUKU.length ? `<div class="grid">${kartu}</div>` : `<div class="kosong-info">Rak masih kosong. Tambahkan buku yang sedang kamu baca.</div>`}`;
+  },
+
+  async bahan() {
+    const f = FILTER_BAHAN;
+    const data = await api("/bahan?" + new URLSearchParams(f).toString());
+    return `<h2>Bank Bahan</h2>
+    <form class="form" id="formCari"><input name="kata" placeholder="Cari kata…" value="${esc(f.kata)}">
+      <select name="tema">${opsi(META.tema, f.tema, "Semua tema")}</select>
+      <select name="jenis">${opsi(META.jenis, f.jenis, "Semua jenis")}</select><button class="g">Cari</button></form>
+    ${data.length ? `<div class="kartu daftar">${data.map(x => `<div>
+      <div class="baris" style="justify-content:space-between"><span><span class="lencana">${esc(x.jenis)}</span> <b>${esc(x.buku_judul)}</b> <span class="muted kecil">${esc(x.lokasi)} · #${x.id}</span></span>
+      <span class="baris"><label class="kecil"><input type="checkbox" data-pakai="${x.id}" ${x.dipakai ? "checked" : ""}> dipakai</label><button class="g bahaya kecil" data-hapus-bahan="${x.id}">Hapus</button></span></div>
+      <div style="margin-top:4px">${esc(x.isi)}</div>
+      <div class="baris" style="margin-top:4px">${x.tema.map(t => `<span class="lencana">#${esc(t)}</span>`).join("")}
+        <input class="kecil" data-tema="${x.id}" data-tema-lama="${esc(JSON.stringify(x.tema))}" placeholder="+ tema (pisah koma)" value="" size="18"></div></div>`).join("")}</div>`
+      : `<div class="kosong-info">Belum ada bahan. Pakai kotak "Tangkap cepat" di atas saat sedang membaca.</div>`}`;
+  },
+
+  async ide() {
+    const semua = await api("/ide");
+    await muatBuku();
+    const kolom = META.status_ide.map(s => {
+      const isi = semua.filter(i => i.status === s);
+      return `<div class="kolom" data-kolom="${s}"><h3><span>${lencanaStatus(s)}</span><span class="muted kecil">${isi.length}</span></h3>
+        ${isi.map(i => `<div class="kartu-ide" draggable="true" data-ide="${i.id}">
+          <div><b>${esc(i.judul)}</b></div>
+          <div class="kecil muted">IDE-${i.id} · ${esc(i.format)}${i.buku_judul ? " · " + esc(i.buku_judul) : ""}</div>
+          ${i.sudut ? `<div class="kecil"><span class="lencana">${esc(i.sudut)}</span></div>` : ""}
+          <div class="kecil muted">${i.ada_naskah ? "📝 ada naskah" : ""}${i.jadwal ? " · 🗓️ " + esc(i.jadwal) : ""}</div></div>`).join("")}</div>`;
+    }).join("");
+    return `<h2>Ide & Naskah</h2>
+    <form class="form" id="formIde"><input name="judul" placeholder="Ide baru…" required style="flex:1 1 220px">
+      <select name="buku_id">${opsi(BUKU.map(b => [b.id, b.judul]), "", "Tanpa buku (tematik)")}</select>
+      <select name="sudut">${opsi(META.sudut, "", "Pilih sudut")}</select>
+      <select name="format">${opsi(META.format, "Carousel")}</select><button class="u">Tambah</button></form>
+    <p class="kecil muted">Seret kartu untuk memindah status. Klik kartu untuk membuka editor naskah.</p>
+    <div class="kanban">${kolom}</div>`;
+  },
+
+  async kalender() {
+    const data = await api("/kalender?bulan=" + bulanKal);
+    const [th, bl] = bulanKal.split("-").map(Number);
+    const awal = (new Date(th, bl - 1, 1).getDay() + 6) % 7, jml = new Date(th, bl, 0).getDate();
+    const hariIni = new Date().toISOString().slice(0, 10);
+    let sel = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map(h => `<div class="kepala">${h}</div>`).join("");
+    for (let i = 0; i < awal; i++) sel += `<div class="hari kosong"></div>`;
+    for (let d = 1; d <= jml; d++) {
+      const tgl = `${bulanKal}-${String(d).padStart(2, "0")}`;
+      sel += `<div class="hari ${tgl === hariIni ? "ini" : ""}"><div class="muted">${d}</div>${data.filter(i => i.jadwal === tgl).map(i => `<span class="chip" data-ide="${i.id}" style="background:var(${WARNA_STATUS[i.status]})" title="${esc(i.judul)}">${esc(i.judul)}</span>`).join("")}</div>`;
+    }
+    const nama = new Date(th, bl - 1, 1).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+    return `<div class="baris" style="justify-content:space-between;margin-bottom:14px"><h2 style="margin:0">Kalender Posting · ${nama}</h2>
+      <div class="baris"><button class="g" data-bulan="-1">‹</button><button class="g" data-bulan="0">Bulan ini</button><button class="g" data-bulan="1">›</button></div></div>
+      <div class="kal">${sel}</div><p class="kecil muted">Atur jadwal dari editor ide.</p>`;
+  },
+
+  async audiens() {
+    const data = await api("/pertanyaan?semua=1");
+    return `<h2>Pertanyaan Audiens</h2>
+    <form class="form" id="formTanya"><input name="isi" placeholder="Pertanyaan / request dari audiens" required style="flex:1 1 300px">
+      <select name="sumber">${opsi(META.sumber, "Komentar")}</select><button class="u">Catat</button></form>
+    ${data.length ? `<div class="kartu daftar">${data.map(q => `<div class="baris" style="justify-content:space-between">
+      <span style="${q.dijawab ? "text-decoration:line-through;opacity:.6" : ""}"><span class="lencana">${esc(q.sumber)}</span> ${esc(q.isi)}${q.ide_id ? ` <span class="muted kecil">→ IDE-${q.ide_id}</span>` : ""}</span>
+      <label class="kecil"><input type="checkbox" data-jawab="${q.id}" ${q.dijawab ? "checked" : ""}> sudah dijawab</label></div>`).join("")}</div>`
+      : `<div class="kosong-info">Belum ada pertanyaan. Catat pertanyaan dari komentar, DM, atau Story di sini.</div>`}`;
+  },
+
+  async agent() {
+    const data = await api("/tugas");
+    return `<h2>Titip Tugas untuk Agent</h2>
+    <p class="muted">Tulis permintaan di sini. Saat kamu membuka Claude Desktop dan memilih prompt <b>mulai_hari</b>, agent akan mengerjakannya.</p>
+    <form class="form" id="formTugas"><input name="permintaan" placeholder='mis. "Buatkan 5 ide dari Laut Bercerita"' required style="flex:1 1 360px"><button class="u">Titip</button></form>
+    ${data.length ? `<div class="kartu daftar">${data.map(t => `<div><div class="baris" style="justify-content:space-between"><b>T-${t.id} ${esc(t.permintaan)}</b>
+      <span class="lencana" style="${t.status === "Selesai" ? "background:var(--ok);color:#fff" : ""}">${esc(t.status)}</span></div>
+      ${t.hasil ? `<div class="kecil" style="margin-top:4px">🤖 ${esc(t.hasil)}</div>` : ""}<div class="kecil muted">${esc(t.dibuat)}</div></div>`).join("")}</div>` : ""}
+    <div class="kartu" style="margin-top:16px"><h3>Prompt siap pakai di Claude Desktop</h3>
+      <div class="kecil">Klik ikon <b>+</b> lalu pilih <b>pojok-literasi</b> di kotak chat Claude:</div>
+      <div class="daftar kecil">
+        <div><b>mulai_hari</b>: ringkasan kondisi dan kerjakan tugas titipan</div>
+        <div><b>cari_ide</b>: ide konten dari satu buku dengan 8 sudut</div>
+        <div><b>wawancara</b>: agent bertanya dulu, lalu menulis naskah dari jawabanmu</div>
+        <div><b>belajar_gaya</b>: agent mempelajari editanmu dan memperbarui panduan suara</div>
+      </div></div>`;
+  },
+
+  async suara() {
+    const { teks } = await api("/panduan");
+    return `<h2>Panduan Suara</h2>
+    <p class="muted">Agent membaca ini setiap kali menulis naskah. Isi dengan gayamu sendiri dan contoh caption terbaikmu. Prompt <b>belajar_gaya</b> akan mengusulkan perbaikan berdasarkan editanmu.</p>
+    <textarea id="teksPanduan" rows="22">${esc(teks)}</textarea>
+    <div class="baris" style="margin-top:10px"><button class="u" id="simpanPanduan">Simpan</button>
+      <span class="kecil muted">Data tersimpan di: ${esc(META.lokasi_db)}</span></div>`;
+  },
+};
+
+/* ---------------- IKAT (event) ---------------- */
+function ikatUmum(m) {
+  m.querySelectorAll("[data-ide]").forEach(el => el.addEventListener("click", () => bukaIde(+el.dataset.ide)));
+  m.querySelectorAll("[data-buku]").forEach(el => el.addEventListener("click", () => bukaBuku(+el.dataset.buku)));
+}
+const formJSON = f => Object.fromEntries(new FormData(f));
+const pisahKoma = s => s.split(",").map(x => x.trim()).filter(Boolean);
+
+const IKAT = {
+  beranda: ikatUmum,
+  kalender(m) {
+    ikatUmum(m);
+    m.querySelectorAll("[data-bulan]").forEach(b => b.onclick = () => {
+      const g = +b.dataset.bulan;
+      if (g === 0) bulanKal = new Date().toISOString().slice(0, 7);
+      else { const [t, bl] = bulanKal.split("-").map(Number); const d = new Date(t, bl - 1 + g, 1); bulanKal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+      render();
+    });
+  },
+  buku(m) {
+    ikatUmum(m);
+    $("#formBuku").onsubmit = async e => {
+      e.preventDefault(); const d = formJSON(e.target);
+      await api("/buku", "POST", { ...d, genre: pisahKoma(d.genre) }); toast("Buku ditambahkan"); await muatBuku(); render();
+    };
+  },
+  bahan(m) {
+    $("#formCari").onsubmit = e => {
+      e.preventDefault();
+      FILTER_BAHAN = Object.fromEntries(Object.entries(formJSON(e.target)).filter(([, v]) => v));
+      render();
+    };
+    m.querySelectorAll("[data-pakai]").forEach(c => c.onchange = () => api(`/bahan/${c.dataset.pakai}`, "PATCH", { dipakai: c.checked }));
+    m.querySelectorAll("[data-hapus-bahan]").forEach(b => b.onclick = async () => { if (confirm("Hapus bahan ini?")) { await api(`/bahan/${b.dataset.hapusBahan}`, "DELETE"); render(); } });
+    m.querySelectorAll("[data-tema]").forEach(inp => inp.onkeydown = async e => {
+      if (e.key !== "Enter") return; e.preventDefault();
+      const lama = JSON.parse(inp.dataset.temaLama || "[]");
+      await api(`/bahan/${inp.dataset.tema}`, "PATCH", { tema: [...new Set([...lama, ...pisahKoma(inp.value)])] });
+      META = await api("/meta"); render();
+    });
+  },
+  ide(m) {
+    ikatUmum(m);
+    $("#formIde").onsubmit = async e => {
+      e.preventDefault(); const d = formJSON(e.target);
+      await api("/ide", "POST", { ...d, buku_id: d.buku_id ? +d.buku_id : null }); render();
+    };
+    m.querySelectorAll(".kartu-ide").forEach(k => k.ondragstart = e => e.dataTransfer.setData("text/plain", k.dataset.ide));
+    m.querySelectorAll(".kolom").forEach(kol => {
+      kol.ondragover = e => { e.preventDefault(); kol.classList.add("over"); };
+      kol.ondragleave = () => kol.classList.remove("over");
+      kol.ondrop = async e => {
+        e.preventDefault(); kol.classList.remove("over");
+        await api(`/ide/${e.dataTransfer.getData("text/plain")}`, "PATCH", { status: kol.dataset.kolom }); render();
+      };
+    });
+  },
+  audiens(m) {
+    $("#formTanya").onsubmit = async e => { e.preventDefault(); await api("/pertanyaan", "POST", formJSON(e.target)); render(); };
+    m.querySelectorAll("[data-jawab]").forEach(c => c.onchange = async () => { await api(`/pertanyaan/${c.dataset.jawab}`, "PATCH", { dijawab: c.checked }); render(); });
+  },
+  agent() { $("#formTugas").onsubmit = async e => { e.preventDefault(); await api("/tugas", "POST", formJSON(e.target)); toast("Dititipkan ke agent"); render(); }; },
+  suara() { $("#simpanPanduan").onclick = async () => { await api("/panduan", "PUT", { teks: $("#teksPanduan").value }); toast("Panduan disimpan"); }; },
+};
+
+/* ---------------- Modal: Buku ---------------- */
+async function bukaBuku(id) {
+  const b = await api(`/buku/${id}`);
+  $("#modalIsi").innerHTML = `<div class="baris" style="justify-content:space-between"><h2 style="margin:0">${esc(b.judul)}</h2><button class="g" data-tutup>Tutup</button></div>
+    <p class="muted">${esc(b.penulis)} · B-${b.id}</p>
+    <div class="dua">
+      <label class="f">Status<select id="bStatus">${opsi(META.status_buku, b.status)}</select></label>
+      <label class="f">Rating<select id="bRating">${opsi(["1", "2", "3", "4", "5"], b.rating, "-")}</select></label></div>
+    <label class="f" style="margin-top:10px">Kesan singkat (bahasamu sendiri)<input id="bKesan" value="${esc(b.kesan)}"></label>
+    <div class="baris" style="margin:10px 0 18px"><button class="u" id="bSimpan">Simpan</button><button class="g bahaya" id="bHapus">Hapus buku</button></div>
+    <div class="dua"><div><h3>Bahan (${b.bahan.length})</h3><div class="daftar">${b.bahan.map(x => `<div><span class="lencana">${esc(x.jenis)}</span> ${esc(x.isi)} <span class="muted kecil">${esc(x.lokasi)}${x.dipakai ? " · ✓ dipakai" : ""}</span></div>`).join("") || `<div class="muted kecil">Belum ada.</div>`}</div></div>
+    <div><h3>Ide (${b.ide.length})</h3><div class="daftar">${b.ide.map(i => `<div class="klik" data-ide-m="${i.id}">${lencanaStatus(i.status)} ${esc(i.judul)}</div>`).join("") || `<div class="muted kecil">Belum ada. Minta agent: prompt <b>cari_ide</b>.</div>`}</div></div></div>`;
+  const d = $("#modal"); if (!d.open) d.showModal();
+  $("[data-tutup]").onclick = () => d.close();
+  $("#bSimpan").onclick = async () => { await api(`/buku/${id}`, "PATCH", { status: $("#bStatus").value, rating: $("#bRating").value || null, kesan: $("#bKesan").value }); toast("Tersimpan"); d.close(); render(); };
+  $("#bHapus").onclick = async () => { if (confirm("Hapus buku beserta semua bahannya?")) { await api(`/buku/${id}`, "DELETE"); d.close(); await muatBuku(); render(); } };
+  document.querySelectorAll("[data-ide-m]").forEach(el => el.onclick = () => bukaIde(+el.dataset.ideM));
+}
+
+/* ---------------- Modal: Editor ide & naskah ---------------- */
+async function bukaIde(id) {
+  const i = await api(`/ide/${id}`);
+  if (!BUKU.length) await muatBuku();
+  $("#modalIsi").innerHTML = `<div class="baris" style="justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">IDE-${i.id} ${lencanaStatus(i.status)}</h2><button class="g" data-tutup>Tutup</button></div>
+    <div class="editor"><div>
+      <label class="f">Judul ide<input id="iJudul" value="${esc(i.judul)}"></label>
+      <label class="f" style="margin-top:8px">Hook (kalimat pembuka)<input id="iHook" value="${esc(i.hook)}"></label>
+      <label class="f" style="margin-top:8px">Naskah <span id="hitung"></span><textarea class="naskah" id="iNaskah" placeholder="Tulis atau tempel naskah di sini. Cek anti-AI berjalan otomatis.">${esc(i.naskah)}</textarea></label>
+      <div class="baris" style="margin-top:10px"><button class="u" id="iSimpan">Simpan</button>
+        <button class="g bahaya" id="iHapus">Hapus ide</button></div>
+      ${i.bahan.length ? `<h3 style="margin-top:18px">Bahan yang dipakai</h3><div class="daftar kecil">${i.bahan.map(x => `<div>${esc(x.isi)}</div>`).join("")}</div>` : ""}
+    </div><div>
+      <h3>Cek anti-AI</h3><div class="temuan" id="temuan"></div>
+      <div class="dua" style="margin-top:12px">
+        <label class="f">Status<select id="iStatus">${opsi(META.status_ide, i.status)}</select></label>
+        <label class="f">Format<select id="iFormat">${opsi(META.format, i.format)}</select></label></div>
+      <label class="f" style="margin-top:8px">Sudut<select id="iSudut">${opsi(META.sudut, i.sudut, "-")}</select></label>
+      <label class="f" style="margin-top:8px">Buku<select id="iBuku">${opsi(BUKU.map(b => [b.id, b.judul]), i.buku_id, "Tanpa buku")}</select></label>
+      <label class="f" style="margin-top:8px">Jadwal posting<input type="date" id="iJadwal" value="${esc(i.jadwal || "")}"></label>
+      <h3 style="margin-top:16px">Riwayat naskah</h3>
+      <div class="daftar kecil">${i.versi.map(v => `<div class="baris" style="justify-content:space-between"><span>${v.oleh === "agent" ? "🤖 agent" : "✍️ kamu"} · ${esc(v.dibuat)}</span><button class="g kecil" data-versi="${v.id}">Lihat</button></div>`).join("") || `<div class="muted">Belum ada.</div>`}</div>
+      <div id="lihatVersi"></div>
+    </div></div>`;
+  const d = $("#modal"); if (!d.open) d.showModal();
+  $("[data-tutup]").onclick = () => { d.close(); render(); };
+  const ta = $("#iNaskah");
+  let h;
+  const cek = async () => {
+    const kata = ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0;
+    $("#hitung").textContent = `· ${kata} kata`;
+    if (!ta.value.trim()) { $("#temuan").innerHTML = `<div class="muted kecil" style="border:0">Mulai menulis untuk melihat hasil cek.</div>`; return; }
+    const r = await api("/cek", "POST", { naskah: ta.value });
+    $("#temuan").innerHTML = r.temuan.length ? r.temuan.map(t => `<div class="${t.tingkat}">${t.tingkat === "merah" ? "🔴" : "🟡"} ${esc(t.pesan)}</div>`).join("")
+      : `<div class="lolos">🟢 Lolos, tidak ada ciri tulisan AI.</div>`;
+  };
+  ta.oninput = () => { clearTimeout(h); h = setTimeout(cek, 400); };
+  cek();
+  $("#iSimpan").onclick = async () => {
+    await api(`/ide/${id}`, "PATCH", { judul: $("#iJudul").value, hook: $("#iHook").value, status: $("#iStatus").value,
+      format: $("#iFormat").value, sudut: $("#iSudut").value, jadwal: $("#iJadwal").value, buku_id: $("#iBuku").value ? +$("#iBuku").value : null });
+    if (ta.value.trim() !== i.naskah.trim()) await api(`/ide/${id}/naskah`, "POST", { naskah: ta.value });
+    toast("Tersimpan ✓"); bukaIde(id);
+  };
+  $("#iHapus").onclick = async () => { if (confirm("Hapus ide ini?")) { await api(`/ide/${id}`, "DELETE"); d.close(); render(); } };
+  document.querySelectorAll("[data-versi]").forEach(b => b.onclick = () => {
+    const v = i.versi.find(x => x.id === +b.dataset.versi);
+    $("#lihatVersi").innerHTML = `<pre class="versi">${esc(v.naskah)}</pre><button class="g kecil" id="pulihkan">Pakai versi ini di editor</button>`;
+    $("#pulihkan").onclick = () => { ta.value = v.naskah; cek(); };
+  });
+}
+
+/* ---------------- Mulai ---------------- */
+(async () => {
+  META = await api("/meta");
+  $("#formTangkap").jenis.innerHTML = opsi(META.jenis, "Reaksi");
+  await muatBuku();
+  const h = location.hash.slice(1);
+  if (HALAMAN.some(([k]) => k === h)) halaman = h;
+  render();
+})();
+</script>
+</body>
+</html>

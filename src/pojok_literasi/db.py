@@ -246,6 +246,41 @@ class DB:
         sql = "SELECT * FROM bahan WHERE buku_id = ?" + (" AND dipakai = 0" if hanya_belum_dipakai else "")
         return self._q(sql + " ORDER BY id", (buku_id,))
 
+    def cari_bahan(self, kata: str = "", tema: str = "", jenis: str = "", batas: int = 50) -> list[dict]:
+        syarat, args = [], []
+        if kata:
+            syarat.append("(x.isi LIKE ? OR x.lokasi LIKE ?)"); args += [f"%{kata}%", f"%{kata}%"]
+        if tema:
+            syarat.append("x.tema LIKE ?"); args.append(f'%"{tema}"%')
+        if jenis:
+            _cek(jenis, JENIS_BAHAN, "Jenis")
+            syarat.append("x.jenis = ?"); args.append(jenis)
+        where = (" WHERE " + " AND ".join(syarat)) if syarat else ""
+        return self._q(f"""SELECT x.*, b.judul AS buku_judul FROM bahan x JOIN buku b ON b.id = x.buku_id
+                           {where} ORDER BY x.id DESC LIMIT ?""", (*args, batas))
+
+    def semua_tema(self) -> list[str]:
+        tema: set[str] = set()
+        for r in self.c.execute("SELECT tema FROM bahan"):
+            tema.update(json.loads(r[0]))
+        return sorted(tema)
+
+    def ubah_bahan(self, id: int, **ubah: Any) -> dict:
+        boleh = {"isi", "jenis", "lokasi", "tema", "dipakai"}
+        ubah = {k: v for k, v in ubah.items() if k in boleh and v is not None}
+        _cek(ubah.get("jenis"), JENIS_BAHAN, "Jenis")
+        if "tema" in ubah:
+            ubah["tema"] = json.dumps(ubah["tema"])
+        if "dipakai" in ubah:
+            ubah["dipakai"] = int(bool(ubah["dipakai"]))
+        if ubah:
+            kolom = ", ".join(f"{k} = ?" for k in ubah)
+            self._tulis(f"UPDATE bahan SET {kolom} WHERE id = ?", (*ubah.values(), id))
+        b = self._satu("SELECT * FROM bahan WHERE id = ?", (id,))
+        if not b:
+            raise GagalValidasi(f"Bahan #{id} tidak ditemukan.")
+        return b
+
     def hapus_bahan(self, id: int) -> None:
         self._tulis("DELETE FROM bahan WHERE id = ?", (id,))
 
@@ -331,6 +366,35 @@ class DB:
         d = self.ide(id)
         return self._q("SELECT * FROM naskah_versi WHERE ide_id = ? ORDER BY id DESC", (d["id"],))
 
+    def pasangan_editan(self, batas: int = 5) -> list[dict]:
+        """Ide yang punya versi tulisan agent DAN versi final yang sudah diedit kamu,
+        dan belum dipelajari. Bahan untuk memperbarui panduan suara."""
+        sudah = set(json.loads(self._pengaturan("ide_dipelajari", "[]")))
+        hasil = []
+        for d in self._q("""SELECT id, judul, naskah FROM ide WHERE length(naskah) > 0
+                            ORDER BY diubah DESC LIMIT 100"""):
+            if d["id"] in sudah:
+                continue
+            agent = self._satu("""SELECT naskah FROM naskah_versi WHERE ide_id = ? AND oleh = 'agent'
+                                  ORDER BY id DESC LIMIT 1""", (d["id"],))
+            terakhir = self._satu("SELECT oleh FROM naskah_versi WHERE ide_id = ? ORDER BY id DESC LIMIT 1",
+                                  (d["id"],))
+            if agent and terakhir and terakhir["oleh"] == "kamu" and agent["naskah"].strip() != d["naskah"].strip():
+                hasil.append({"id": d["id"], "judul": d["judul"], "versi_agent": agent["naskah"],
+                              "versi_final": d["naskah"]})
+            if len(hasil) >= batas:
+                break
+        return hasil
+
+    def tandai_dipelajari(self, ide_ids: list[int]) -> None:
+        sudah = set(json.loads(self._pengaturan("ide_dipelajari", "[]")))
+        sudah.update(int(i) for i in ide_ids)
+        self._tulis("INSERT OR REPLACE INTO pengaturan VALUES ('ide_dipelajari', ?)", (json.dumps(sorted(sudah)),))
+
+    def _pengaturan(self, kunci: str, default: str) -> str:
+        r = self._satu("SELECT nilai FROM pengaturan WHERE kunci = ?", (kunci,))
+        return r["nilai"] if r else default
+
     def hapus_ide(self, id: int | str) -> None:
         d = self.ide(id)
         self._tulis("DELETE FROM ide WHERE id = ?", (d["id"],))
@@ -400,7 +464,14 @@ class DB:
             "pertanyaan_terbuka": self._satu("SELECT count(*) AS n FROM pertanyaan WHERE dijawab = 0")["n"],
             "tugas_menunggu": self._q("SELECT id, permintaan FROM tugas WHERE status = 'Menunggu' ORDER BY id"),
             "bahan_belum_dipakai": self._satu("SELECT count(*) AS n FROM bahan WHERE dipakai = 0")["n"],
+            "editan_belum_dipelajari": len(self.pasangan_editan(batas=20)),
         }
+
+    def kalender(self, bulan: str) -> list[dict]:
+        """bulan format YYYY-MM."""
+        return self._q("""SELECT i.id, i.judul, i.jadwal, i.status, i.format, b.judul AS buku_judul
+                          FROM ide i LEFT JOIN buku b ON b.id = i.buku_id
+                          WHERE i.jadwal LIKE ? ORDER BY i.jadwal""", (f"{bulan}-%",))
 
     def ekspor(self) -> dict:
         tabel = ["buku", "bahan", "ide", "ide_bahan", "naskah_versi", "pertanyaan", "tugas", "pengaturan"]

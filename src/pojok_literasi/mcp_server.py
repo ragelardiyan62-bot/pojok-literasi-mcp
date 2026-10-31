@@ -1,31 +1,33 @@
-"""MCP server Pojok Literasi: tool tingkat tinggi di atas Notion.
+"""MCP server Pojok Literasi untuk Claude Desktop.
 
-Setiap tool mengembalikan teks ringkas (bukan JSON mentah Notion) supaya hemat token.
+Semua tool mengembalikan teks ringkas agar hemat token. Saat dijalankan, server ini
+juga menyalakan dashboard web lokal (lihat web.py) supaya kamu tidak perlu
+menjalankan apa pun secara terpisah.
 """
 
 from __future__ import annotations
 
+import difflib
+import os
 import re
-import time
+import sys
+import threading
 from typing import Literal
 
-from pydantic import BaseModel, Field
 from mcp.server.mcpserver import MCPServer
+from pydantic import BaseModel, Field
 
 from . import anti_ai
-from .notion import (Konfigurasi, Notion, ambil, p_judul, p_multi, p_pilih, p_relasi,
-                     p_status, p_tanggal, p_teks, paragraf)
+from .db import DB, GagalValidasi
 
-INSTRUKSI = """Server ini mengelola sistem konten Instagram 'Pojok Literasi' di Notion.
-Alur kerja:
-1. Saat user membaca: catat_reaksi (reaksi/kutipan/cerita pribadi, kata-kata user apa adanya).
-2. Cari ide: bahan_buku -> usulkan ide dengan 8 sudut -> simpan_ide.
-3. Menulis: pakai prompt 'wawancara' atau tanya user satu per satu. JANGAN mengarang
-   pengalaman user. Panggil panduan_suara sekali per sesi sebelum menulis.
-4. simpan_naskah otomatis menjalankan cek_anti_ai; perbaiki temuan 'merah' bersama user.
-Ide dirujuk dengan kode seperti IDE-12, buku dengan judulnya."""
-
-mcp = MCPServer("pojok-literasi", instructions=INSTRUKSI)
+INSTRUKSI = """Sistem konten Instagram 'Pojok Literasi' (data lokal milik user).
+Mulai sesi dengan ringkasan_hari_ini. Kerjakan tugas_menunggu bila ada.
+Aturan menulis: panggil konteks_ide (sudah berisi panduan suara) sebelum menulis naskah.
+JANGAN pernah mengarang pengalaman/opini user; naskah hanya dari bahan dan jawaban user.
+Kalau bahan kurang, wawancarai user (satu pertanyaan per giliran).
+simpan_naskah menjalankan cek anti-AI; perbaiki temuan 'merah' bersama user.
+Ubah panduan suara HANYA setelah user menyetujui usulanmu.
+Kode: buku B-1, ide IDE-1, tugas T-1, bahan #1."""
 
 SUDUT = Literal[
     "Kalimat yang Mengubah Pikiranku", "Yang Aku Tidak Setuju", "Cocok untuk Kamu yang...",
@@ -35,315 +37,351 @@ SUDUT = Literal[
 STATUS_BUKU = Literal["Mau Dibaca", "Sedang Dibaca", "Selesai", "Berhenti"]
 STATUS_IDE = Literal["Ide", "Wawancara", "Draft", "Siap", "Posted"]
 FORMAT = Literal["Carousel", "Reels", "Single Post", "Story"]
-JENIS = Literal["Kutipan", "Reaksi", "Cerita Pribadi"]
+JENIS = Literal["Reaksi", "Kutipan", "Cerita Pribadi"]
 
-_cfg: Konfigurasi | None = None
-_notion: Notion | None = None
-_cache_panduan: tuple[float, str] | None = None
-
-
-def _n() -> tuple[Konfigurasi, Notion]:
-    global _cfg, _notion
-    if _cfg is None:
-        _cfg = Konfigurasi()
-        _notion = Notion(_cfg.token)
-    assert _notion is not None
-    return _cfg, _notion
+mcp = MCPServer("pojok-literasi", instructions=INSTRUKSI)
+_db: DB | None = None
 
 
-async def _cari_buku(judul: str) -> dict:
-    cfg, n = _n()
-    hasil = await n.query(cfg.db_buku, {"property": "Judul", "title": {"contains": judul}}, batas=5)
-    if not hasil:
-        raise ValueError(f"Buku '{judul}' tidak ditemukan. Tambahkan dulu dengan tambah_buku.")
-    persis = [h for h in hasil if ambil(h, "Judul").lower() == judul.lower()]
-    if len(persis) == 1:
-        return persis[0]
-    if len(hasil) > 1:
-        daftar = ", ".join(ambil(h, "Judul") for h in hasil)
-        raise ValueError(f"Judul '{judul}' ambigu: {daftar}. Sebutkan lebih lengkap.")
-    return hasil[0]
+def db() -> DB:
+    global _db
+    if _db is None:
+        _db = DB()
+    return _db
 
 
-def _nomor(kode: str | int) -> int:
-    m = re.search(r"\d+", str(kode))
-    if not m:
-        raise ValueError(f"Kode ide '{kode}' tidak valid (contoh: IDE-12).")
-    return int(m.group())
+def _aman(fn):
+    """Ubah error validasi jadi pesan biasa (bukan stack trace) supaya agent bisa memperbaiki."""
+    import functools
+
+    @functools.wraps(fn)
+    def bungkus(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except GagalValidasi as e:
+            return f"GAGAL: {e}"
+    return bungkus
 
 
-async def _cari_ide(kode: str | int) -> dict:
-    cfg, n = _n()
-    hasil = await n.query(cfg.db_ide, {"property": "Kode", "unique_id": {"equals": _nomor(kode)}}, batas=1)
-    if not hasil:
-        raise ValueError(f"Ide {kode} tidak ditemukan.")
-    return hasil[0]
+def _f_buku(b: dict) -> str:
+    rating = f" ★{b['rating']}" if b.get("rating") else ""
+    return f"B-{b['id']} {b['judul']} | {b['penulis'] or '?'} | {b['status']}{rating}"
 
 
-async def _judul_halaman(ids: list[str]) -> list[str]:
-    _, n = _n()
-    out = []
-    for i in ids:
-        h = await n._req("GET", f"/pages/{i}")
-        judul = next((ambil(h, k) for k, v in h["properties"].items() if v["type"] == "title"), "")
-        out.append(judul)
-    return out
+def _f_bahan(x: dict) -> str:
+    lok = f", {x['lokasi']}" if x["lokasi"] else ""
+    tema = f" #{' #'.join(x['tema'])}" if x["tema"] else ""
+    pakai = " ✓" if x["dipakai"] else ""
+    return f"#{x['id']} [{x['jenis']}{lok}{pakai}] {x['isi']}{tema}"
+
+
+def _f_ide(i: dict) -> str:
+    jadwal = f" | {i['jadwal']}" if i.get("jadwal") else ""
+    buku = f" | {i['buku_judul']}" if i.get("buku_judul") else ""
+    return f"IDE-{i['id']} [{i['status']}] {i['judul']} | {i['sudut'] or '-'} | {i['format']}{buku}{jadwal}"
+
+
+# ---------------- Ringkasan & tugas ----------------
+
+@mcp.tool()
+@_aman
+def ringkasan_hari_ini() -> str:
+    """Kondisi terkini: buku yang dibaca, pipeline ide, jadwal 7 hari, draft mandek, tugas titipan user."""
+    r = db().ringkasan()
+    baris = ["Sedang dibaca: " + (", ".join(f"B-{b['id']} {b['judul']}" for b in r["sedang_dibaca"]) or "-"),
+             "Ide: " + ", ".join(f"{k} {v}" for k, v in r["ide_per_status"].items()),
+             f"Bahan belum dipakai: {r['bahan_belum_dipakai']} | Pertanyaan terbuka: {r['pertanyaan_terbuka']}"]
+    if r["jadwal_sepekan"]:
+        baris.append("Jadwal 7 hari:\n" + "\n".join(
+            f"- {j['jadwal']} IDE-{j['id']} {j['judul']} [{j['status']}]" for j in r["jadwal_sepekan"]))
+    if r["draft_mandek"]:
+        baris.append("Mandek >7 hari: " + ", ".join(f"IDE-{d['id']} {d['judul']}" for d in r["draft_mandek"]))
+    if r["editan_belum_dipelajari"]:
+        baris.append(f"Ada {r['editan_belum_dipelajari']} naskah yang kamu edit; jalankan pelajari_editan.")
+    if r["tugas_menunggu"]:
+        baris.append("TUGAS DARI USER:\n" + "\n".join(f"- T-{t['id']}: {t['permintaan']}" for t in r["tugas_menunggu"]))
+    return "\n".join(baris)
+
+
+@mcp.tool()
+@_aman
+def selesaikan_tugas(kode_tugas: str, hasil: str) -> str:
+    """Tandai tugas titipan user selesai, dengan ringkasan singkat apa yang dikerjakan (tampil di dashboard)."""
+    t = db().selesaikan_tugas(int(re.sub(r"\D", "", kode_tugas)), hasil)
+    return f"T-{t['id']} selesai."
 
 
 # ---------------- Buku ----------------
 
 @mcp.tool()
-async def tambah_buku(judul: str, penulis: str = "", status: STATUS_BUKU = "Mau Dibaca",
-                      genre: list[str] | None = None) -> str:
-    """Tambah buku ke rak. Genre bebas, mis. Fiksi, Nonfiksi, Self-Improvement, Sastra Indonesia."""
-    cfg, n = _n()
-    prop = {"Judul": p_judul(judul), "Status": p_status(status)}
-    if penulis:
-        prop["Penulis"] = p_teks(penulis)
-    if genre:
-        prop["Genre"] = p_multi(genre)
-    await n.buat(cfg.db_buku, prop)
-    return f"Buku '{judul}' ditambahkan ({status})."
+@_aman
+def tambah_buku(judul: str, penulis: str = "", status: STATUS_BUKU = "Mau Dibaca",
+                genre: list[str] | None = None) -> str:
+    """Tambah buku ke rak."""
+    return "Ditambahkan: " + _f_buku(db().tambah_buku(judul, penulis, status, genre))
 
 
 @mcp.tool()
-async def update_buku(judul: str, status: STATUS_BUKU | None = None, rating: int | None = None,
-                      kesan_singkat: str | None = None, tanggal_selesai: str | None = None) -> str:
-    """Ubah status/rating(1-5)/kesan singkat/tanggal selesai (YYYY-MM-DD) sebuah buku."""
-    _, n = _n()
-    b = await _cari_buku(judul)
-    prop: dict = {}
-    if status:
-        prop["Status"] = p_status(status)
-    if rating is not None:
-        prop["Rating"] = p_pilih(str(max(1, min(5, rating))))
-    if kesan_singkat is not None:
-        prop["Kesan Singkat"] = p_teks(kesan_singkat)
-    if tanggal_selesai:
-        prop["Selesai Dibaca"] = p_tanggal(tanggal_selesai)
-    if not prop:
-        return "Tidak ada yang diubah."
-    await n.ubah(b["id"], prop)
-    return f"'{ambil(b, 'Judul')}' diperbarui: {', '.join(prop)}."
+@_aman
+def update_buku(buku: str, status: STATUS_BUKU | None = None, rating: int | None = None,
+                kesan: str | None = None) -> str:
+    """Ubah status/rating(1-5)/kesan singkat. `buku` = kode (B-1) atau judul."""
+    b = db().cari_buku(buku)
+    return "Diperbarui: " + _f_buku(db().ubah_buku(b["id"], status=status, rating=rating, kesan=kesan))
 
 
 @mcp.tool()
-async def daftar_buku(status: STATUS_BUKU | None = None) -> str:
-    """Daftar buku (opsional difilter status)."""
-    cfg, n = _n()
-    f = {"property": "Status", "status": {"equals": status}} if status else None
-    hasil = await n.query(cfg.db_buku, f, batas=100)
-    if not hasil:
-        return "Rak masih kosong."
-    return "\n".join(
-        f"- {ambil(h, 'Judul')} | {ambil(h, 'Penulis') or '?'} | {ambil(h, 'Status')}"
-        + (f" | ★{ambil(h, 'Rating')}" if ambil(h, "Rating") else "")
-        for h in hasil
-    )
+@_aman
+def daftar_buku(status: STATUS_BUKU | None = None) -> str:
+    """Daftar buku di rak."""
+    hasil = db().daftar_buku(status)
+    return "\n".join(_f_buku(b) + f" | {b['jumlah_bahan']} bahan, {b['jumlah_ide']} ide" for b in hasil) or "Rak kosong."
 
 
-# ---------------- Reaksi & Kutipan ----------------
+# ---------------- Bahan ----------------
 
 @mcp.tool()
-async def catat_reaksi(judul_buku: str, isi: str, jenis: JENIS = "Reaksi",
-                       halaman_atau_bab: str = "", tema: list[str] | None = None) -> str:
-    """Simpan reaksi/kutipan/cerita pribadi saat membaca. Simpan kata-kata user APA ADANYA."""
-    cfg, n = _n()
-    b = await _cari_buku(judul_buku)
-    prop = {"Isi": p_judul(isi), "Jenis": p_pilih(jenis), "Buku": p_relasi([b["id"]])}
-    if halaman_atau_bab:
-        prop["Halaman/Bab"] = p_teks(halaman_atau_bab)
-    if tema:
-        prop["Tema"] = p_multi(tema)
-    await n.buat(cfg.db_reaksi, prop)
-    return f"{jenis} untuk '{ambil(b, 'Judul')}' tersimpan."
+@_aman
+def catat_bahan(buku: str, isi: str, jenis: JENIS = "Reaksi", lokasi: str = "",
+                tema: list[str] | None = None) -> str:
+    """Simpan reaksi/kutipan/cerita pribadi user. Tulis kata-kata user APA ADANYA, jangan dirapikan.
+    lokasi = halaman/bab. tema = kata kunci bebas (mis. keluarga, kehilangan)."""
+    b = db().cari_buku(buku)
+    x = db().catat_bahan(b["id"], isi, jenis, lokasi, tema)
+    return f"Tersimpan #{x['id']} untuk {b['judul']}."
 
 
 @mcp.tool()
-async def bahan_buku(judul_buku: str, hanya_belum_dipakai: bool = False) -> str:
-    """Semua bahan mentah satu buku (kesan + reaksi + kutipan) dalam format ringkas. Pakai ini untuk mencari ide."""
-    cfg, n = _n()
-    b = await _cari_buku(judul_buku)
-    f: dict = {"property": "Buku", "relation": {"contains": b["id"]}}
-    if hanya_belum_dipakai:
-        f = {"and": [f, {"property": "Dipakai", "checkbox": {"equals": False}}]}
-    reaksi = await n.query(cfg.db_reaksi, f, sorts=[{"timestamp": "created_time", "direction": "ascending"}], batas=100)
-    kepala = (f"BUKU: {ambil(b, 'Judul')} - {ambil(b, 'Penulis') or '?'} | {ambil(b, 'Status')}"
-              f" | rating {ambil(b, 'Rating') or '-'}\nKesan: {ambil(b, 'Kesan Singkat') or '-'}")
-    if not reaksi:
-        return kepala + "\n(Belum ada reaksi/kutipan. Ajak user bercerita dulu.)"
-    baris = []
-    for r in reaksi:
-        lok = ambil(r, "Halaman/Bab")
-        tanda = " ✓dipakai" if ambil(r, "Dipakai") else ""
-        baris.append(f"- [{ambil(r, 'Jenis')}{', ' + lok if lok else ''}{tanda}] {ambil(r, 'Isi')} (id:{r['id'][:8]})")
-    return kepala + "\n" + "\n".join(baris)
-
-
-# ---------------- Ide Konten ----------------
-
-class IdeBaru(BaseModel):
-    ide: str = Field(description="Judul ide, singkat")
-    sudut: SUDUT
-    format: FORMAT = "Carousel"
-    hook: str = Field("", description="Kalimat pembuka, sebaiknya dari kata-kata user sendiri")
-
-
-@mcp.tool()
-async def simpan_ide(judul_buku: str, ide: list[IdeBaru]) -> str:
-    """Simpan satu atau beberapa ide konten untuk sebuah buku (status awal 'Ide')."""
-    cfg, n = _n()
-    b = await _cari_buku(judul_buku)
-    kode = []
-    for i in ide:
-        prop = {"Ide": p_judul(i.ide), "Sudut": p_pilih(i.sudut), "Format": p_pilih(i.format),
-                "Buku": p_relasi([b["id"]]), "Status": p_status("Ide")}
-        if i.hook:
-            prop["Hook"] = p_teks(i.hook)
-        h = await n.buat(cfg.db_ide, prop)
-        kode.append(f"{ambil(h, 'Kode')}: {i.ide}")
-    return "Tersimpan:\n" + "\n".join(f"- {k}" for k in kode)
-
-
-@mcp.tool()
-async def daftar_ide(status: STATUS_IDE | None = None, batas: int = 20) -> str:
-    """Daftar ide konten (opsional per status), terbaru dulu."""
-    cfg, n = _n()
-    f = {"property": "Status", "status": {"equals": status}} if status else None
-    hasil = await n.query(cfg.db_ide, f, sorts=[{"timestamp": "last_edited_time", "direction": "descending"}],
-                          batas=batas)
-    if not hasil:
-        return "Belum ada ide" + (f" berstatus {status}." if status else ".")
-    out = []
-    for h in hasil:
-        jadwal = ambil(h, "Jadwal Posting")
-        out.append(f"- {ambil(h, 'Kode')} [{ambil(h, 'Status')}] {ambil(h, 'Ide')} | {ambil(h, 'Sudut') or '-'}"
-                   f" | {ambil(h, 'Format') or '-'}" + (f" | jadwal {jadwal}" if jadwal else ""))
+@_aman
+def bahan_buku(buku: str, hanya_belum_dipakai: bool = False) -> str:
+    """Semua bahan mentah satu buku + kesan + ide yang sudah ada. Pakai untuk mencari ide baru."""
+    b = db().cari_buku(buku)
+    bahan = db().bahan_buku(b["id"], hanya_belum_dipakai)
+    ide = db().daftar_ide(buku_id=b["id"])
+    out = [_f_buku(b), f"Kesan: {b['kesan'] or '-'}", "Bahan:"]
+    out += [_f_bahan(x) for x in bahan] or ["(kosong, ajak user bercerita dulu)"]
+    if ide:
+        out += ["Ide yang sudah ada (jangan diulang):"] + [_f_ide(i) for i in ide]
     return "\n".join(out)
 
 
 @mcp.tool()
-async def lihat_ide(kode: str) -> str:
-    """Detail satu ide: sudut, hook, buku, bahan terkait, dan naskah yang sudah ada."""
-    _, n = _n()
-    h = await _cari_ide(kode)
-    buku = await _judul_halaman(ambil(h, "Buku") or [])
-    bahan = await _judul_halaman(ambil(h, "Bahan") or [])
-    naskah = await n.teks_halaman(h["id"])
-    bag = [
-        f"{ambil(h, 'Kode')} [{ambil(h, 'Status')}] {ambil(h, 'Ide')}",
-        f"Buku: {', '.join(buku) or '-'} | Sudut: {ambil(h, 'Sudut') or '-'} | Format: {ambil(h, 'Format') or '-'}",
-        f"Hook: {ambil(h, 'Hook') or '-'}",
-    ]
-    if bahan:
-        bag.append("Bahan:\n" + "\n".join(f"- {x}" for x in bahan))
-    bag.append("Naskah:\n" + (naskah or "(belum ada)"))
-    return "\n".join(bag)
+@_aman
+def cari_bahan(kata: str = "", tema: str = "", jenis: JENIS | Literal[""] = "") -> str:
+    """Cari bahan lintas buku berdasar kata atau tema. Berguna untuk konten tematik
+    (mis. '5 buku untuk yang lagi patah hati')."""
+    hasil = db().cari_bahan(kata, tema, jenis)
+    if not hasil:
+        return "Tidak ada. Tema yang tersedia: " + (", ".join(db().semua_tema()) or "-")
+    return "\n".join(f"{_f_bahan(x)} ({x['buku_judul']})" for x in hasil)
+
+
+# ---------------- Ide ----------------
+
+class IdeBaru(BaseModel):
+    judul: str = Field(description="Judul ide, singkat")
+    sudut: SUDUT
+    format: FORMAT = "Carousel"
+    hook: str = Field("", description="Kalimat pembuka, sebaiknya kutip kata-kata user dari bahan")
 
 
 @mcp.tool()
-async def simpan_naskah(kode: str, naskah: str, id_bahan_dipakai: list[str] | None = None) -> str:
-    """Simpan/ganti naskah sebuah ide, status jadi 'Draft', lalu jalankan cek_anti_ai otomatis.
-    id_bahan_dipakai: id (8 karakter pertama juga boleh) reaksi/kutipan dari bahan_buku yang dipakai."""
-    cfg, n = _n()
-    h = await _cari_ide(kode)
-    await n.hapus_isi(h["id"])
-    await n.tambah_blok(h["id"], paragraf(naskah))
-    prop: dict = {"Status": p_status("Draft")}
-    if id_bahan_dipakai:
-        ids = await _lengkapi_id_bahan(h, id_bahan_dipakai)
-        prop["Bahan"] = p_relasi(list(dict.fromkeys((ambil(h, "Bahan") or []) + ids)))
-        for i in ids:
-            await n.ubah(i, {"Dipakai": {"checkbox": True}})
-    await n.ubah(h["id"], prop)
-    return f"Naskah {ambil(h, 'Kode')} tersimpan (Draft).\n\nCek anti-AI:\n" + anti_ai.ringkas(anti_ai.periksa(naskah))
-
-
-async def _lengkapi_id_bahan(ide: dict, potongan: list[str]) -> list[str]:
-    """Terima id penuh atau 8 karakter pertama; cocokkan dengan reaksi milik buku ide ini."""
-    cfg, n = _n()
-    penuh = [p for p in potongan if len(p.replace("-", "")) == 32]
-    pendek = [p for p in potongan if p not in penuh]
-    if pendek:
-        kandidat: list[dict] = []
-        for buku_id in ambil(ide, "Buku") or []:
-            kandidat += await n.query(cfg.db_reaksi, {"property": "Buku", "relation": {"contains": buku_id}}, batas=100)
-        for p in pendek:
-            cocok = [k["id"] for k in kandidat if k["id"].startswith(p)]
-            if not cocok:
-                raise ValueError(f"Bahan dengan id '{p}' tidak ditemukan pada buku ide ini.")
-            penuh.append(cocok[0])
-    return penuh
+@_aman
+def simpan_ide(ide: list[IdeBaru], buku: str = "") -> str:
+    """Simpan satu/lebih ide konten (status 'Ide'). `buku` boleh kosong untuk ide tematik."""
+    buku_id = db().cari_buku(buku)["id"] if buku else None
+    hasil = [db().tambah_ide(i.judul, buku_id, i.sudut, i.format, i.hook) for i in ide]
+    return "Tersimpan:\n" + "\n".join(_f_ide(i) for i in hasil)
 
 
 @mcp.tool()
-async def ubah_status_ide(kode: str, status: STATUS_IDE, jadwal_posting: str | None = None) -> str:
-    """Pindahkan ide di pipeline. jadwal_posting format YYYY-MM-DD (opsional)."""
-    _, n = _n()
-    h = await _cari_ide(kode)
-    prop = {"Status": p_status(status)}
-    if jadwal_posting:
-        prop["Jadwal Posting"] = p_tanggal(jadwal_posting)
-    await n.ubah(h["id"], prop)
-    return f"{ambil(h, 'Kode')} -> {status}" + (f", jadwal {jadwal_posting}" if jadwal_posting else "")
+@_aman
+def daftar_ide(status: STATUS_IDE | None = None, batas: int = 20) -> str:
+    """Daftar ide (terbaru diubah dulu)."""
+    return "\n".join(_f_ide(i) for i in db().daftar_ide(status, batas=batas)) or "Belum ada ide."
+
+
+@mcp.tool()
+@_aman
+def konteks_ide(kode_ide: str) -> str:
+    """SEMUA yang dibutuhkan untuk menulis naskah dalam satu panggilan: detail ide, naskah saat ini,
+    bahan buku terkait, dan panduan suara user."""
+    i = db().ide(kode_ide)
+    out = [_f_ide(i), f"Hook: {i['hook'] or '-'}"]
+    if i["buku_id"]:
+        b = db().buku(i["buku_id"])
+        out += [f"Kesan buku: {b['kesan'] or '-'}", "Bahan buku:"]
+        out += [_f_bahan(x) for x in db().bahan_buku(b["id"])] or ["(kosong)"]
+    elif i["bahan"]:
+        out += ["Bahan terkait:"] + [_f_bahan(x) for x in i["bahan"]]
+    out += ["Naskah saat ini:", i["naskah"] or "(belum ada)", "", "=== PANDUAN SUARA ===", db().panduan_suara()]
+    return "\n".join(out)
+
+
+@mcp.tool()
+@_aman
+def ubah_ide(kode_ide: str, status: STATUS_IDE | None = None, jadwal: str | None = None,
+             judul: str | None = None, hook: str | None = None, format: FORMAT | None = None) -> str:
+    """Ubah status/jadwal (YYYY-MM-DD, '' untuk hapus)/judul/hook/format sebuah ide."""
+    return "Diperbarui: " + _f_ide(db().ubah_ide(kode_ide, status=status, jadwal=jadwal, judul=judul,
+                                                  hook=hook, format=format))
+
+
+@mcp.tool()
+@_aman
+def simpan_naskah(kode_ide: str, naskah: str, bahan_dipakai: list[int] | None = None) -> str:
+    """Simpan naskah buatanmu (tercatat sebagai versi 'agent'), lalu cek anti-AI otomatis.
+    bahan_dipakai = nomor bahan (#) yang dipakai, agar ditandai sudah terpakai."""
+    i = db().simpan_naskah(kode_ide, naskah, oleh="agent", bahan_ids=bahan_dipakai)
+    return (f"Naskah IDE-{i['id']} tersimpan [{i['status']}]. User bisa mengeditnya di dashboard.\n\n"
+            + anti_ai.ringkas(anti_ai.periksa(naskah)))
 
 
 # ---------------- Pertanyaan audiens ----------------
 
 @mcp.tool()
-async def catat_pertanyaan(pertanyaan: str, sumber: Literal["Komentar", "DM", "Story"] = "Komentar") -> str:
-    """Catat pertanyaan/request dari audiens."""
-    cfg, n = _n()
-    await n.buat(cfg.db_pertanyaan, {"Pertanyaan": p_judul(pertanyaan), "Sumber": p_pilih(sumber)})
-    return "Pertanyaan tersimpan."
+@_aman
+def catat_pertanyaan(pertanyaan: str, sumber: Literal["Komentar", "DM", "Story", "Lainnya"] = "Komentar") -> str:
+    """Catat pertanyaan/request audiens."""
+    return f"Tersimpan Q-{db().catat_pertanyaan(pertanyaan, sumber)['id']}."
 
 
 @mcp.tool()
-async def pertanyaan_terbuka() -> str:
-    """Pertanyaan audiens yang belum dijawab jadi konten."""
-    cfg, n = _n()
-    hasil = await n.query(cfg.db_pertanyaan, {"property": "Sudah Dijawab", "checkbox": {"equals": False}}, batas=50)
-    if not hasil:
-        return "Tidak ada pertanyaan terbuka."
-    return "\n".join(f"- [{ambil(h, 'Sumber') or '?'}] {ambil(h, 'Pertanyaan')}" for h in hasil)
+@_aman
+def pertanyaan_terbuka() -> str:
+    """Pertanyaan audiens yang belum dijadikan konten."""
+    return "\n".join(f"Q-{q['id']} [{q['sumber']}] {q['isi']}" for q in db().daftar_pertanyaan()) or "Tidak ada."
 
-
-# ---------------- Gaya & kualitas ----------------
 
 @mcp.tool()
-async def panduan_suara() -> str:
-    """Panduan gaya bahasa user. Baca SEKALI per sesi sebelum menulis naskah."""
-    global _cache_panduan
-    if _cache_panduan and time.time() - _cache_panduan[0] < 600:
-        return _cache_panduan[1]
-    cfg, n = _n()
-    teks = await n.teks_halaman(cfg.halaman_panduan)
-    _cache_panduan = (time.time(), teks)
-    return teks
+@_aman
+def jawab_pertanyaan(kode_pertanyaan: str, kode_ide: str = "") -> str:
+    """Tandai pertanyaan sudah dijawab, opsional dikaitkan ke ide konten yang menjawabnya."""
+    ide_id = db().ide(kode_ide)["id"] if kode_ide else None
+    db().tandai_pertanyaan(int(re.sub(r"\D", "", kode_pertanyaan)), True, ide_id)
+    return "Ditandai terjawab."
+
+
+# ---------------- Gaya bahasa ----------------
+
+@mcp.tool()
+@_aman
+def panduan_suara() -> str:
+    """Panduan gaya bahasa user (sudah termasuk di konteks_ide)."""
+    return db().panduan_suara()
+
+
+@mcp.tool()
+@_aman
+def perbarui_panduan_suara(teks_lengkap: str) -> str:
+    """Ganti seluruh panduan suara. HANYA setelah user menyetujui usulan perubahannya."""
+    db().simpan_panduan_suara(teks_lengkap)
+    return "Panduan suara diperbarui."
+
+
+def _diff_ringkas(a: str, b: str) -> str:
+    pecah = lambda s: [k.strip() for k in re.split(r"(?<=[.!?])\s+|\n+", s) if k.strip()]
+    baris = [d for d in difflib.ndiff(pecah(a), pecah(b)) if d[:1] in "-+"]
+    return "\n".join(baris) or "(hanya beda spasi)"
+
+
+@mcp.tool()
+@_aman
+def pelajari_editan(batas: int = 3) -> str:
+    """Bandingkan naskah tulisanmu (agent) dengan versi final yang sudah diedit user.
+    '-' = kalimatmu yang dibuang/diubah user, '+' = versi user. Simpulkan pola gaya user,
+    usulkan tambahan ke panduan suara, minta persetujuan, lalu perbarui_panduan_suara
+    dan tandai_dipelajari."""
+    pasangan = db().pasangan_editan(batas)
+    if not pasangan:
+        return "Belum ada editan baru untuk dipelajari."
+    return "\n\n".join(f"== IDE-{p['id']} {p['judul']} ==\n{_diff_ringkas(p['versi_agent'], p['versi_final'])}"
+                       for p in pasangan)
+
+
+@mcp.tool()
+@_aman
+def tandai_dipelajari(kode_ide: list[str]) -> str:
+    """Tandai editan yang sudah dipelajari supaya tidak muncul lagi."""
+    db().tandai_dipelajari([db().ide(k)["id"] for k in kode_ide])
+    return "Ditandai."
 
 
 @mcp.tool()
 def cek_anti_ai(naskah: str) -> str:
-    """Periksa naskah dari ciri tulisan AI (frasa klise, tanpa detail pribadi, dll). Lokal, tanpa token LLM."""
+    """Periksa ciri tulisan AI. Berjalan lokal tanpa memakai token model."""
     return anti_ai.ringkas(anti_ai.periksa(naskah))
+
+
+@mcp.tool()
+def alamat_dashboard() -> str:
+    """URL dashboard web untuk user."""
+    return f"http://localhost:{_port()}"
+
+
+# ---------------- Prompts (alur siap pakai) ----------------
+
+@mcp.prompt()
+def mulai_hari() -> str:
+    """Cek kondisi hari ini dan kerjakan tugas titipan."""
+    return ("Panggil ringkasan_hari_ini. Kerjakan tugas dari user satu per satu (tanya kalau kurang jelas), "
+            "lalu selesaikan_tugas. Setelah itu sarankan 1-3 hal paling penting untuk dikerjakan hari ini.")
+
+
+@mcp.prompt()
+def cari_ide(buku: str) -> str:
+    """Cari ide konten dari satu buku memakai 8 sudut."""
+    return (f"Panggil bahan_buku('{buku}'). Usulkan 6-8 ide memakai 8 sudut konten, masing-masing dengan hook "
+            "yang mengutip kata-kataku dari bahan. Kalau bahan kurang untuk suatu sudut, tanyakan padaku dulu. "
+            "Tunjukkan daftarnya, biarkan aku memilih, lalu simpan_ide hanya yang kupilih.")
 
 
 @mcp.prompt()
 def wawancara(kode_ide: str) -> str:
-    """Mode wawancara: AI menggali cerita user untuk satu ide, lalu menyusun naskah dari jawabannya."""
-    return (
-        f"Kita akan menulis naskah untuk ide {kode_ide}.\n"
-        f"1. Panggil lihat_ide('{kode_ide}') dan panduan_suara().\n"
-        "2. Panggil bahan_buku untuk buku terkait.\n"
-        "3. Wawancarai aku SATU pertanyaan per giliran (maks 5), gali pengalaman, opini, "
-        "dan momen spesifik. Jangan menulis naskah dulu.\n"
-        "4. Susun naskah HANYA dari jawabanku + bahan yang ada. Pertahankan kata-kataku. "
-        "Jangan mengarang pengalaman.\n"
-        "5. simpan_naskah, lalu bahas temuan cek anti-AI denganku."
-    )
+    """Gali cerita user untuk satu ide, lalu tulis naskah dari jawabannya."""
+    return (f"Panggil konteks_ide('{kode_ide}') dan ubah_ide statusnya ke Wawancara. "
+            "Wawancarai aku SATU pertanyaan per giliran (maks 5) untuk menggali momen spesifik, opini, dan "
+            "perasaanku. Simpan jawaban pentingku dengan catat_bahan (kata-kataku apa adanya). "
+            "Lalu susun naskah HANYA dari jawabanku dan bahan, ikuti panduan suara, dan simpan_naskah. "
+            "Bahas temuan anti-AI denganku.")
+
+
+@mcp.prompt()
+def belajar_gaya() -> str:
+    """Pelajari editan user agar naskah berikutnya makin mirip gayanya."""
+    return ("Panggil pelajari_editan dan panduan_suara. Simpulkan pola: kata yang kubuang, kata yang kutambah, "
+            "panjang kalimat, nada. Usulkan perubahan konkret untuk panduan suara (tunjukkan bagian yang "
+            "berubah saja). Setelah aku setuju, perbarui_panduan_suara lalu tandai_dipelajari.")
+
+
+# ---------------- Menjalankan ----------------
+
+def _port() -> int:
+    return int(os.environ.get("POJOK_PORT", "8765"))
+
+
+def _nyalakan_dashboard() -> None:
+    if os.environ.get("POJOK_WEB", "1") == "0":
+        return
+    import socket
+
+    with socket.socket() as s:
+        if s.connect_ex(("127.0.0.1", _port())) == 0:
+            return  # sudah jalan (mis. jendela Claude lain)
+
+    def jalan():
+        import uvicorn
+        from .web import buat_app
+        try:
+            uvicorn.run(buat_app(db()), host="127.0.0.1", port=_port(), log_level="warning", access_log=False)
+        except BaseException as e:  # jangan sampai mematikan MCP
+            print(f"Dashboard gagal jalan: {e}", file=sys.stderr)
+
+    threading.Thread(target=jalan, daemon=True).start()
 
 
 def main() -> None:
+    _nyalakan_dashboard()
     mcp.run()
 
 
