@@ -1,0 +1,20 @@
+[project]
+name = "pojok-literasi-mcp"
+version = "0.1.0"
+description = "MCP server untuk sistem konten Instagram Pojok Literasi (Notion)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["mcp>=2.3,<3", "httpx>=0.27"]
+
+[project.scripts]
+pojok-literasi-mcp = "pojok_literasi_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pojok_literasi_mcp"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
